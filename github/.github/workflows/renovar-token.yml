@@ -1,16 +1,18 @@
-name: Verificar Aniversários
+name: Renovar Refresh Token
 
 on:
   schedule:
-    # Roda diariamente às 07:00 (horário de Brasília = UTC-3, então 10:00 UTC)
-    - cron: '0 10 * * *'
+    # Roda a cada 2 horas (UTC)
+    # Horários aproximados em Brasília (UTC-3):
+    # 00:00, 02:00, 04:00, 06:00, 08:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
+    - cron: '0 */2 * * *'
   workflow_dispatch:  # Permite execução manual
 
 permissions:
-  contents: write  # Necessário para fazer commit/push do token atualizado
+  contents: write  # Necessário para fazer commit/push
 
 jobs:
-  verificar-aniversarios:
+  renovar-token:
     runs-on: ubuntu-latest
     
     steps:
@@ -29,11 +31,10 @@ jobs:
           cd github
           pip install -r requirements.txt
       
-      - name: Executar script de aniversários
+      - name: Renovar refresh_token
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           API_KEY_BOTCONVERSA: ${{ secrets.API_KEY_BOTCONVERSA }}
         run: |
           cd github
-          python msys_bot.py
-
+          python msys_bot.py --renovar

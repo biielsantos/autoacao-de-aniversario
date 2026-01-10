@@ -14,26 +14,89 @@ WEBHOOK_URL = "https://new-backend.botconversa.com.br/api/v1/webhooks-automation
 API_KEY_BOTCONVERSA = "a33c54d2-5f92-4f29-b78d-5082b7b70518"
 
 def carregar_credentials():
-    """Carrega o refresh_token do arquivo credentials.json"""
+    """
+    Carrega o refresh_token do arquivo credentials.json ou variável de ambiente.
+    Se não encontrar refresh_token mas encontrar usuário/senha, faz login inicial.
+    """
+    # Primeiro tenta variável de ambiente (GitHub Actions)
+    refresh_token_env = os.getenv("REFRESH_TOKEN")
+    if refresh_token_env:
+        print("✓ Usando REFRESH_TOKEN das variáveis de ambiente")
+        return {"refresh_token": refresh_token_env}
+    
+    # Tenta variáveis de ambiente para login inicial
+    usuario_env = os.getenv("MSYS_USUARIO")
+    senha_env = os.getenv("MSYS_SENHA")
+    
+    # Se não encontrar, tenta arquivo (desenvolvimento local)
     try:
         with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
             content = f.read().strip()
             if not content:
-                print(f"Erro: Arquivo {CREDENTIALS_FILE} está vazio!")
-                print(f"\nPor favor, edite o arquivo com o seguinte formato:")
-                print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
+                print(f"⚠️  Arquivo {CREDENTIALS_FILE} está vazio!")
+                # Tenta login com variáveis de ambiente
+                if usuario_env and senha_env:
+                    print("🔄 Tentando login inicial com variáveis de ambiente...")
+                    access_token, refresh_token = fazer_login_inicial(usuario_env, senha_env)
+                    if refresh_token:
+                        return {"refresh_token": refresh_token}
                 return None
-            return json.loads(content)
+            
+            credentials = json.loads(content)
+            
+            # Se tiver refresh_token, mostra que está usando
+            if credentials.get("refresh_token"):
+                print("✓ Usando refresh_token existente do arquivo credentials.json")
+                return credentials
+            
+            # Se não tiver refresh_token mas tiver usuário/senha, faz login inicial
+            usuario = credentials.get("usuario") or credentials.get("username") or credentials.get("login")
+            senha = credentials.get("senha") or credentials.get("password")
+            
+            if usuario and senha:
+                print("\n🔄 Refresh token não encontrado, fazendo login inicial com usuário/senha...")
+                print(f"   Usuário: {usuario}")
+                access_token, refresh_token = fazer_login_inicial(usuario, senha)
+                
+                if refresh_token:
+                    # Salva o refresh_token obtido para próxima vez
+                    credentials["refresh_token"] = refresh_token
+                    salvar_credentials(credentials)
+                    print("✓ Login inicial realizado com sucesso! Refresh token salvo.")
+                    return credentials
+                else:
+                    print("❌ Falha ao obter refresh_token do login inicial")
+                    return None
+            else:
+                # Não tem refresh_token nem usuário/senha
+                print("⚠️  Arquivo não contém refresh_token nem usuário/senha")
+                print("\nFormato esperado:")
+                print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
+                print("\nOu:")
+                print('{\n  "usuario": "SEU_USUARIO",\n  "senha": "SUA_SENHA"\n}')
+                return None
+            
     except FileNotFoundError:
-        print(f"Erro: Arquivo {CREDENTIALS_FILE} não encontrado!")
-        print(f"\nPor favor, crie o arquivo {CREDENTIALS_FILE} com o seguinte formato:")
+        print(f"⚠️  Arquivo {CREDENTIALS_FILE} não encontrado!")
+        # Tenta fazer login com variáveis de ambiente se disponíveis
+        if usuario_env and senha_env:
+            print("🔄 Tentando login inicial com variáveis de ambiente...")
+            access_token, refresh_token = fazer_login_inicial(usuario_env, senha_env)
+            if refresh_token:
+                # Salva no arquivo para próxima vez
+                credentials = {"refresh_token": refresh_token}
+                salvar_credentials(credentials)
+                return credentials
+        
+        print(f"\nPor favor, crie o arquivo {CREDENTIALS_FILE} com um dos formatos:")
+        print('\nOpção 1 (com refresh_token):')
         print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
+        print('\nOpção 2 (com usuário/senha):')
+        print('{\n  "usuario": "SEU_USUARIO",\n  "senha": "SUA_SENHA"\n}')
         return None
     except json.JSONDecodeError as e:
-        print(f"Erro: Arquivo {CREDENTIALS_FILE} com formato inválido!")
+        print(f"❌ Erro: Arquivo {CREDENTIALS_FILE} com formato inválido!")
         print(f"Detalhes do erro: {e}")
-        print(f"\nO arquivo deve ter o seguinte formato JSON válido:")
-        print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
         print("\nVerifique se:")
         print("- As chaves estão entre aspas duplas")
         print("- Não há vírgulas extras")
@@ -48,6 +111,183 @@ def salvar_credentials(credentials):
         print("✓ Refresh token atualizado com sucesso!")
     except Exception as e:
         print(f"Erro ao salvar credentials: {e}")
+
+def fazer_login_inicial(usuario, senha):
+    """
+    Faz login inicial com usuário e senha para obter refresh_token.
+    Tenta múltiplos formatos até encontrar o correto.
+    Retorna (access_token, refresh_token) ou (None, None) em caso de erro
+    """
+    url = f"{BASE_URL}/api/openapi/v1/login"
+    
+    # Lista de formatos para tentar
+    formatos = [
+        # Formato 1: Parâmetros na URL com username/password
+        {
+            "method": "params",
+            "data": {"username": usuario, "password": senha},
+            "name": "Params: username/password"
+        },
+        # Formato 2: Parâmetros na URL com usuario/senha
+        {
+            "method": "params",
+            "data": {"usuario": usuario, "senha": senha},
+            "name": "Params: usuario/senha"
+        },
+        # Formato 3: Body JSON com username/password
+        {
+            "method": "json",
+            "data": {"username": usuario, "password": senha},
+            "name": "JSON Body: username/password"
+        },
+        # Formato 4: Body JSON com usuario/senha
+        {
+            "method": "json",
+            "data": {"usuario": usuario, "senha": senha},
+            "name": "JSON Body: usuario/senha"
+        },
+        # Formato 5: Body JSON com login/password
+        {
+            "method": "json",
+            "data": {"login": usuario, "password": senha},
+            "name": "JSON Body: login/password"
+        },
+    ]
+    
+    for formato in formatos:
+        try:
+            print(f"  Tentando: {formato['name']}...")
+            
+            if formato["method"] == "params":
+                response = requests.post(url, params=formato["data"], timeout=10)
+            else:  # json
+                headers = {"Content-Type": "application/json"}
+                response = requests.post(url, json=formato["data"], headers=headers, timeout=10)
+            
+            # Mostra detalhes da resposta
+            print(f"     Status Code: {response.status_code}")
+            print(f"     Content-Type: {response.headers.get('Content-Type', 'N/A')}")
+            print(f"     Resposta (primeiros 200 chars): {response.text[:200]}")
+            
+            # Verifica se obteve sucesso
+            if response.status_code in [200, 201]:
+                # Tenta fazer parse do JSON apenas se houver conteúdo
+                if not response.text or response.text.strip() == "":
+                    print(f"  ✗ Status {response.status_code} mas resposta vazia")
+                    continue
+                
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as json_err:
+                    print(f"  ✗ Erro ao fazer parse do JSON: {json_err}")
+                    print(f"     Resposta completa: {response.text[:500]}")
+                    continue
+                
+                # Tenta extrair tokens com diferentes nomes de campos
+                access_token = (
+                    data.get("accesstoken") or 
+                    data.get("access_token") or 
+                    data.get("accessToken") or
+                    data.get("token")
+                )
+                
+                refresh_token = (
+                    data.get("refreshtoken") or 
+                    data.get("refresh_token") or 
+                    data.get("refreshToken")
+                )
+                
+                if access_token and refresh_token:
+                    print(f"  ✓ Sucesso com: {formato['name']}")
+                    return access_token, refresh_token
+                else:
+                    print(f"  ⚠️  Status 200 mas tokens não encontrados na resposta")
+                    print(f"     Campos disponíveis: {list(data.keys())}")
+            else:
+                print(f"  ✗ Status {response.status_code}")
+                
+        except requests.exceptions.Timeout:
+            print(f"  ✗ Erro: Timeout - O servidor não respondeu em 10 segundos")
+            continue
+        except requests.exceptions.ConnectionError as e:
+            print(f"  ✗ Erro de conexão: {str(e)[:100]}")
+            continue
+        except requests.exceptions.RequestException as e:
+            print(f"  ✗ Erro na requisição: {str(e)[:100]}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"     Status Code: {e.response.status_code}")
+                print(f"     Resposta: {e.response.text[:200]}")
+            continue
+        except Exception as e:
+            print(f"  ✗ Erro inesperado: {str(e)[:100]}")
+            import traceback
+            print(f"     Traceback: {traceback.format_exc()[:300]}")
+            continue
+    
+    print("\n❌ Todos os formatos falharam. Verifique:")
+    print("   - Usuário e senha estão corretos?")
+    print("   - A API aceita login com usuário/senha?")
+    print("   - Consulte a documentação da API do MSYS")
+    return None, None
+
+def testar_login():
+    """Função para testar o login inicial com usuário/senha"""
+    print("=" * 50)
+    print("TESTE: Login inicial com usuário/senha")
+    print("=" * 50)
+    
+    # Tenta carregar do arquivo credentials.json
+    try:
+        with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if not content:
+                print(f"❌ Arquivo {CREDENTIALS_FILE} está vazio!")
+                print("\nPor favor, adicione usuário e senha:")
+                print('{\n  "usuario": "SEU_USUARIO",\n  "senha": "SUA_SENHA"\n}')
+                return
+            
+            credentials = json.loads(content)
+            usuario = credentials.get("usuario") or credentials.get("username") or credentials.get("login")
+            senha = credentials.get("senha") or credentials.get("password")
+            
+            if not usuario or not senha:
+                print("❌ Usuário ou senha não encontrados no credentials.json!")
+                print("\nFormato esperado:")
+                print('{\n  "usuario": "SEU_USUARIO",\n  "senha": "SUA_SENHA"\n}')
+                return
+            
+            print(f"\n📋 Credenciais encontradas:")
+            print(f"   Usuário: {usuario}")
+            print(f"   Senha: {'*' * len(senha)}")
+            
+            print(f"\n🔄 Tentando fazer login inicial...\n")
+            access_token, refresh_token = fazer_login_inicial(usuario, senha)
+            
+            if access_token and refresh_token:
+                print(f"\n" + "=" * 50)
+                print("✓ LOGIN BEM-SUCEDIDO!")
+                print("=" * 50)
+                print(f"\n📝 Tokens obtidos:")
+                print(f"   Access Token: {access_token[:20]}...")
+                print(f"   Refresh Token: {refresh_token[:20]}...")
+                
+                # Salva o refresh_token
+                credentials["refresh_token"] = refresh_token
+                salvar_credentials(credentials)
+                print(f"\n✓ Refresh token salvo em {CREDENTIALS_FILE}")
+                print(f"  Na próxima execução, o script usará o refresh_token automaticamente")
+            else:
+                print(f"\n" + "=" * 50)
+                print("❌ LOGIN FALHOU")
+                print("=" * 50)
+                
+    except FileNotFoundError:
+        print(f"❌ Arquivo {CREDENTIALS_FILE} não encontrado!")
+        print("\nPor favor, crie o arquivo com:")
+        print('{\n  "usuario": "SEU_USUARIO",\n  "senha": "SUA_SENHA"\n}')
+    except json.JSONDecodeError as e:
+        print(f"❌ Erro: Arquivo {CREDENTIALS_FILE} com formato inválido!")
+        print(f"Detalhes: {e}")
 
 def obter_access_token(refresh_token):
     """Obtém um novo access token usando o refresh token"""
@@ -468,10 +708,19 @@ def processar_pessoas(pessoas, access_token=None, buscar_datas_nascimento=False)
     return pessoas_processadas
 
 def filtrar_aniversariantes_hoje(pessoas_processadas):
-    """Filtra pessoas que fazem aniversário hoje (mesmo mês e dia)"""
-    hoje = datetime.now()
+    """Filtra pessoas que fazem aniversário hoje (mesmo mês e dia) - usando timezone de Brasília"""
+    from datetime import timezone, timedelta
+    
+    # Define timezone de Brasília (UTC-3)
+    brasilia_tz = timezone(timedelta(hours=-3))
+    
+    # Pega a data atual no timezone de Brasília
+    hoje = datetime.now(brasilia_tz)
     mes_atual = hoje.month
     dia_atual = hoje.day
+    
+    # Debug: mostra a data sendo usada
+    print(f"📅 Verificando aniversariantes de: {dia_atual:02d}/{mes_atual:02d} (timezone Brasília)")
     
     aniversariantes = []
     
@@ -607,17 +856,31 @@ def testar_webhook():
     print(f"  URL: {webhook_url}")
     
     try:
+        print(f"\n⏳ Fazendo requisição...")
         response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+        
+        print(f"\n📥 Resposta recebida:")
+        print(f"  Status Code: {response.status_code}")
+        print(f"  Resposta: {response.text[:500]}")
         
         if response.status_code in [200, 201]:
             print(f"\n✓ Teste enviado com sucesso! Status: {response.status_code}")
         else:
             print(f"\n✗ Falha no teste! Status: {response.status_code}")
-            print(f"  Resposta: {response.text[:200]}")
+            print(f"  Resposta completa: {response.text}")
+    except requests.exceptions.Timeout:
+        print(f"\n✗ Erro: Timeout - O servidor não respondeu em 10 segundos")
+    except requests.exceptions.ConnectionError as e:
+        print(f"\n✗ Erro de conexão: {e}")
     except requests.exceptions.RequestException as e:
         print(f"\n✗ Erro ao enviar: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"  Status Code: {e.response.status_code}")
+            print(f"  Resposta: {e.response.text[:500]}")
     except Exception as e:
         print(f"\n✗ Erro inesperado: {e}")
+        import traceback
+        print(f"  Traceback: {traceback.format_exc()}")
 
 def main():
     """Função principal"""
@@ -675,9 +938,13 @@ def main():
 if __name__ == "__main__":
     import sys
     
+    # Se passar --teste-login como argumento, executa apenas o teste do login
+    if len(sys.argv) > 1 and sys.argv[1] == "--teste-login":
+        testar_login()
     # Se passar --teste como argumento, executa apenas o teste do webhook
-    if len(sys.argv) > 1 and sys.argv[1] == "--teste":
+    elif len(sys.argv) > 1 and sys.argv[1] == "--teste":
         testar_webhook()
     else:
         main()
+
 
