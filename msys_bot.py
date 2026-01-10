@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Configurações
 BASE_URL = "https://www.msysimob.com.br/msys-imob-web"
 CREDENTIALS_FILE = "credentials.json"
-REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJ3eHVmdHJ1cCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk0OTQ1MDcsImlhdCI6MTc2Nzk1ODUwNywianRpIjoiZDFkNmM0MTItNDI4My00ZDg0LTg1YmUtZDZkZjc1NzJiMTgyIn0.BbHFrBpGrHffUs9kBWIsLzgYKPQJTw6kpiq7_FQRdto"  # Será atualizado automaticamente pelo script
+REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyI3bXY4dnU2MyJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk1MzY5MTMsImlhdCI6MTc2ODAwMDkxMywianRpIjoiOTk4ZjljYjItNTZiMS00ZGMzLThiNWItZTIwMmFhNDc3MGE4In0.ubwbIBuhTW_TaxiGSWcyIz3QQdm6p6j__wmsOXHx8TI"  # Será atualizado automaticamente pelo script
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://new-backend.botconversa.com.br/api/v1/webhooks-automation/catch/147503/g8en0hO6l4RJ/")
 API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-5082b7b70518")
 
@@ -52,8 +52,8 @@ def atualizar_refresh_token_no_codigo(novo_token):
         
         # Encontra e substitui a linha do REFRESH_TOKEN
         import re
-        padrao = r'REFRESH_TOKEN = "[^"]*"'
-        novo_valor = f'REFRESH_TOKEN = "{novo_token}"'
+        padrao = r'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyI3bXY4dnU2MyJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk1MzY5MTMsImlhdCI6MTc2ODAwMDkxMywianRpIjoiOTk4ZjljYjItNTZiMS00ZGMzLThiNWItZTIwMmFhNDc3MGE4In0.ubwbIBuhTW_TaxiGSWcyIz3QQdm6p6j__wmsOXHx8TI"]*"'
+        novo_valor = f'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyI3bXY4dnU2MyJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk1MzY5MTMsImlhdCI6MTc2ODAwMDkxMywianRpIjoiOTk4ZjljYjItNTZiMS00ZGMzLThiNWItZTIwMmFhNDc3MGE4In0.ubwbIBuhTW_TaxiGSWcyIz3QQdm6p6j__wmsOXHx8TI"'
         
         novo_conteudo = re.sub(padrao, novo_valor, conteudo)
         
