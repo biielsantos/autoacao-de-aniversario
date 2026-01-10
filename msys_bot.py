@@ -512,10 +512,19 @@ def processar_pessoas(pessoas, access_token=None, buscar_datas_nascimento=False)
     return pessoas_processadas
 
 def filtrar_aniversariantes_hoje(pessoas_processadas):
-    """Filtra pessoas que fazem aniversário hoje (mesmo mês e dia)"""
-    hoje = datetime.now()
+    """Filtra pessoas que fazem aniversário hoje (mesmo mês e dia) - usando timezone de Brasília"""
+    from datetime import timezone, timedelta
+    
+    # Define timezone de Brasília (UTC-3)
+    brasilia_tz = timezone(timedelta(hours=-3))
+    
+    # Pega a data atual no timezone de Brasília
+    hoje = datetime.now(brasilia_tz)
     mes_atual = hoje.month
     dia_atual = hoje.day
+    
+    # Debug: mostra a data sendo usada
+    print(f"📅 Verificando aniversariantes de: {dia_atual:02d}/{mes_atual:02d} (timezone Brasília)")
     
     aniversariantes = []
     
