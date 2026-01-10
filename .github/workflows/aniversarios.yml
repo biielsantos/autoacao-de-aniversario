@@ -9,10 +9,15 @@ on:
 jobs:
   verificar-aniversarios:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Permissão para fazer commit e push
+      secrets: read    # Permissão para ler secrets (se necessário)
     
     steps:
     - name: Checkout código
       uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Configurar Python
       uses: actions/setup-python@v4
@@ -25,9 +30,9 @@ jobs:
     
     - name: Executar script de aniversários
       env:
-        REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
         API_KEY_BOTCONVERSA: ${{ secrets.API_KEY_BOTCONVERSA }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         python msys_bot.py
 

@@ -1,5 +1,6 @@
 import json
 import os
+import base64
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -7,12 +8,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Configurações
 BASE_URL = "https://www.msysimob.com.br/msys-imob-web"
 CREDENTIALS_FILE = "credentials.json"
+REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJ3eHVmdHJ1cCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk0OTQ1MDcsImlhdCI6MTc2Nzk1ODUwNywianRpIjoiZDFkNmM0MTItNDI4My00ZDg0LTg1YmUtZDZkZjc1NzJiMTgyIn0.BbHFrBpGrHffUs9kBWIsLzgYKPQJTw6kpiq7_FQRdto"  # Será atualizado automaticamente pelo script
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://new-backend.botconversa.com.br/api/v1/webhooks-automation/catch/147503/g8en0hO6l4RJ/")
 API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-5082b7b70518")
 
 def carregar_credentials():
-    """Carrega o refresh_token do arquivo credentials.json ou variável de ambiente"""
-    # Primeiro tenta variável de ambiente (GitHub Actions)
+    """Carrega o refresh_token da variável REFRESH_TOKEN no código ou arquivo"""
+    # Primeiro tenta ler da variável REFRESH_TOKEN no código
+    if REFRESH_TOKEN and REFRESH_TOKEN != "SEU_REFRESH_TOKEN_AQUI":
+        return {"refresh_token": REFRESH_TOKEN}
+    
+    # Se não encontrar no código, tenta variável de ambiente (compatibilidade)
     refresh_token_env = os.getenv("REFRESH_TOKEN")
     if refresh_token_env:
         return {"refresh_token": refresh_token_env}
@@ -23,41 +29,180 @@ def carregar_credentials():
             content = f.read().strip()
             if not content:
                 print(f"Erro: Arquivo {CREDENTIALS_FILE} está vazio!")
-                print(f"\nPor favor, edite o arquivo com o seguinte formato:")
-                print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
+                print(f"\nPor favor, edite o arquivo ou a variável REFRESH_TOKEN no código")
                 return None
             return json.loads(content)
     except FileNotFoundError:
-        print(f"Erro: Arquivo {CREDENTIALS_FILE} não encontrado!")
-        print(f"\nPor favor, crie o arquivo {CREDENTIALS_FILE} com o seguinte formato:")
-        print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
+        print(f"⚠️  REFRESH_TOKEN não configurado!")
+        print(f"\nPor favor, edite a variável REFRESH_TOKEN no código msys_bot.py")
         return None
     except json.JSONDecodeError as e:
         print(f"Erro: Arquivo {CREDENTIALS_FILE} com formato inválido!")
         print(f"Detalhes do erro: {e}")
-        print(f"\nO arquivo deve ter o seguinte formato JSON válido:")
-        print('{\n  "refresh_token": "SEU_REFRESH_TOKEN_AQUI"\n}')
-        print("\nVerifique se:")
-        print("- As chaves estão entre aspas duplas")
-        print("- Não há vírgulas extras")
-        print("- O JSON está bem formatado")
         return None
 
+def atualizar_refresh_token_no_codigo(novo_token):
+    """Atualiza o refresh_token diretamente no arquivo Python e faz commit/push"""
+    arquivo = "msys_bot.py"
+    
+    try:
+        # Lê o arquivo
+        with open(arquivo, 'r', encoding='utf-8') as f:
+            conteudo = f.read()
+        
+        # Encontra e substitui a linha do REFRESH_TOKEN
+        import re
+        padrao = r'REFRESH_TOKEN = "[^"]*"'
+        novo_valor = f'REFRESH_TOKEN = "{novo_token}"'
+        
+        novo_conteudo = re.sub(padrao, novo_valor, conteudo)
+        
+        # Verifica se algo mudou
+        if novo_conteudo == conteudo:
+            print("ℹ️  Refresh token já está atualizado")
+            return True
+        
+        # Salva o arquivo
+        with open(arquivo, 'w', encoding='utf-8') as f:
+            f.write(novo_conteudo)
+        
+        print("✓ Arquivo msys_bot.py atualizado com novo refresh_token")
+        
+        # Se estiver no GitHub Actions, faz commit e push
+        if os.getenv("GITHUB_ACTIONS"):
+            import subprocess
+            
+            try:
+                # Configura git
+                subprocess.run(['git', 'config', '--global', 'user.name', 'github-actions[bot]'], 
+                             check=False, capture_output=True)
+                subprocess.run(['git', 'config', '--global', 'user.email', 'github-actions[bot]@users.noreply.github.com'], 
+                             check=False, capture_output=True)
+                
+                # Adiciona arquivo
+                result = subprocess.run(['git', 'add', arquivo], 
+                                      check=False, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"⚠️  Erro ao adicionar arquivo: {result.stderr}")
+                    return False
+                
+                # Commit
+                result = subprocess.run(['git', 'commit', '-m', 'Atualiza refresh_token automaticamente'], 
+                                      check=False, capture_output=True, text=True)
+                if result.returncode != 0:
+                    if "nothing to commit" in result.stdout or "nothing to commit" in result.stderr:
+                        print("ℹ️  Nada para commitar (arquivo já atualizado)")
+                        return True
+                    print(f"⚠️  Erro no commit: {result.stderr}")
+                    return False
+                
+                # Push
+                result = subprocess.run(['git', 'push'], 
+                                      check=False, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"⚠️  Erro no push: {result.stderr}")
+                    print(f"   O arquivo foi atualizado localmente, mas não foi enviado ao GitHub")
+                    return False
+                
+                print("✓ Commit e push realizados automaticamente!")
+                return True
+                
+            except Exception as e:
+                print(f"⚠️  Erro ao fazer commit/push: {e}")
+                print(f"   O arquivo foi atualizado localmente, mas não foi enviado ao GitHub")
+                return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Erro ao atualizar arquivo: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return False
+
+def atualizar_github_secret(secret_name, secret_value):
+    """Atualiza um secret do GitHub usando a API"""
+    try:
+        from nacl import encoding, public
+    except ImportError:
+        print("⚠️  PyNaCl não instalado. Instale com: pip install PyNaCl")
+        return False
+    
+    # Obtém informações do repositório e token do GitHub Actions
+    github_token = os.getenv("GITHUB_TOKEN")
+    github_repo = os.getenv("GITHUB_REPOSITORY")  # formato: owner/repo
+    github_api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+    
+    if not github_token or not github_repo:
+        print("⚠️  GITHUB_TOKEN ou GITHUB_REPOSITORY não encontrado")
+        return False
+    
+    try:
+        # Passo 1: Obter a chave pública do repositório
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # Obtém a chave pública do repositório
+        public_key_url = f"{github_api_url}/repos/{github_repo}/actions/secrets/public-key"
+        response = requests.get(public_key_url, headers=headers)
+        response.raise_for_status()
+        
+        public_key_data = response.json()
+        key_id = public_key_data["key_id"]
+        public_key = public_key_data["key"]
+        
+        # Passo 2: Criptografar o valor do secret usando a chave pública
+        public_key_obj = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
+        sealed_box = public.SealedBox(public_key_obj)
+        encrypted_value = sealed_box.encrypt(secret_value.encode("utf-8"))
+        encrypted_value_b64 = base64.b64encode(encrypted_value).decode("utf-8")
+        
+        # Passo 3: Atualizar o secret
+        update_url = f"{github_api_url}/repos/{github_repo}/actions/secrets/{secret_name}"
+        payload = {
+            "encrypted_value": encrypted_value_b64,
+            "key_id": key_id
+        }
+        
+        response = requests.put(update_url, json=payload, headers=headers)
+        response.raise_for_status()
+        
+        return True
+    except Exception as e:
+        print(f"Erro ao atualizar secret do GitHub: {e}")
+        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            print(f"Resposta da API: {e.response.text}")
+        return False
+
 def salvar_credentials(credentials):
-    """Salva o refresh_token atualizado no arquivo credentials.json ou atualiza secret"""
-    # Se estiver rodando no GitHub Actions, não salva (secrets não podem ser atualizados automaticamente)
-    if os.getenv("REFRESH_TOKEN"):
-        print("⚠️  Rodando no GitHub Actions - refresh_token não será salvo automaticamente")
-        print("⚠️  Se o refresh_token mudou, atualize manualmente o secret REFRESH_TOKEN")
+    """Salva o refresh_token atualizado diretamente no código Python"""
+    new_refresh_token = credentials.get("refresh_token")
+    
+    if not new_refresh_token:
         return
     
-    # Se estiver rodando localmente, salva no arquivo
-    try:
-        with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(credentials, f, indent=2, ensure_ascii=False)
-        print("✓ Refresh token atualizado com sucesso!")
-    except Exception as e:
-        print(f"Erro ao salvar credentials: {e}")
+    # Verifica se o token mudou
+    if REFRESH_TOKEN == new_refresh_token:
+        print("ℹ️  Refresh token não mudou (continua o mesmo)")
+        return
+    
+    print("\n🔄 Atualizando refresh_token no código...")
+    
+    # Atualiza no código Python
+    if atualizar_refresh_token_no_codigo(new_refresh_token):
+        print("✓ Refresh token atualizado no código com sucesso!")
+        
+        # Se estiver no GitHub Actions e fez commit/push, avisa
+        if os.getenv("GITHUB_ACTIONS"):
+            print("💡 O novo refresh_token foi salvo no código e enviado ao GitHub")
+            print("   Na próxima execução, o novo token será usado automaticamente")
+    else:
+        print("❌ Falha ao atualizar refresh_token no código")
+        print(f"⚠️  Token atual: {REFRESH_TOKEN[:20]}...")
+        print(f"⚠️  Novo token: {new_refresh_token[:20]}...")
+        print("⚠️  Atualize manualmente a variável REFRESH_TOKEN no código")
 
 def obter_access_token(refresh_token):
     """Obtém um novo access token usando o refresh token"""
@@ -500,10 +645,9 @@ def main():
     
     print("✓ Access token obtido com sucesso!")
     
-    # Atualiza o refresh token (se não estiver no GitHub Actions)
-    if not os.getenv("REFRESH_TOKEN"):
-        credentials["refresh_token"] = new_refresh_token
-        salvar_credentials(credentials)
+    # Atualiza o refresh token (automaticamente no GitHub Actions ou localmente)
+    credentials["refresh_token"] = new_refresh_token
+    salvar_credentials(credentials)
     
     # 3. Busca pessoas ativas
     print("\n[3/4] Buscando pessoas ativas...")
@@ -528,6 +672,40 @@ def main():
     print("Processo concluído com sucesso!")
     print("=" * 50)
 
+def testar_atualizacao_token():
+    """Função para testar a atualização automática do refresh_token"""
+    print("=" * 70)
+    print("TESTE: Atualização automática do refresh_token")
+    print("=" * 70)
+    
+    # Token de teste (diferente do atual)
+    token_teste = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.TESTE_TOKEN_PARA_VERIFICAR_ATUALIZACAO.AUTOMATICA"
+    
+    print(f"\n📋 Token atual no código:")
+    print(f"   {REFRESH_TOKEN[:50]}...")
+    
+    print(f"\n🔄 Testando atualização com token de teste...")
+    print(f"   (Não vai fazer commit no GitHub, apenas simula localmente)")
+    
+    # Simula atualização
+    credentials_teste = {"refresh_token": token_teste}
+    salvar_credentials(credentials_teste)
+    
+    print(f"\n" + "=" * 70)
+    print("TESTE CONCLUÍDO")
+    print("=" * 70)
+    print("\n💡 Para testar no GitHub Actions:")
+    print("   1. Faça commit e push deste código")
+    print("   2. Execute o workflow manualmente")
+    print("   3. O script vai atualizar o REFRESH_TOKEN automaticamente")
+    print("   4. Verifique os logs para ver se fez commit/push")
+
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Se passar --teste-atualizar como argumento, executa o teste
+    if len(sys.argv) > 1 and sys.argv[1] == "--teste-atualizar":
+        testar_atualizacao_token()
+    else:
+        main()
 
