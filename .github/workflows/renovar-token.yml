@@ -1,0 +1,40 @@
+name: Renovar Refresh Token
+
+on:
+  schedule:
+    # Roda a cada 2 horas (UTC)
+    # Horários aproximados em Brasília (UTC-3):
+    # 00:00, 02:00, 04:00, 06:00, 08:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
+    - cron: '0 */2 * * *'
+  workflow_dispatch:  # Permite execução manual
+
+permissions:
+  contents: write  # Necessário para fazer commit/push
+
+jobs:
+  renovar-token:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Instalar dependências
+        run: |
+          cd github
+          pip install -r requirements.txt
+      
+      - name: Renovar refresh_token
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          API_KEY_BOTCONVERSA: ${{ secrets.API_KEY_BOTCONVERSA }}
+        run: |
+          cd github
+          python msys_bot.py --renovar
