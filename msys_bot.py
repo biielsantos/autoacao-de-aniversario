@@ -52,9 +52,9 @@ def atualizar_refresh_token_no_codigo(novo_token):
         
         # Encontra e substitui a linha do REFRESH_TOKEN usando padrão genérico
         import re
-        # Padrão genérico que encontra REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJuMWMxdGxveSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDYwNTcsImlhdCI6MTc2ODA3MDA1NywianRpIjoiNzUzZWUxMzktOWMwOS00ZmJhLTg2OTQtYzdhYjlhZDNkOWU0In0.WdfiYdS6HVgsArcvSvCRaeJ9YAjW2ylpBbQiyyMOorw"  # Será atualizado automaticamente pelo script (inclui comentário no final)
+        # Padrão genérico que encontra REFRESH_TOKEN = "qualquer_token_aqui" (inclui comentário no final)
         # IMPORTANTE: Usa padrão genérico [^"]* para encontrar QUALQUER token, não hardcoded!
-        padrao = r'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJuMWMxdGxveSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDYwNTcsImlhdCI6MTc2ODA3MDA1NywianRpIjoiNzUzZWUxMzktOWMwOS00ZmJhLTg2OTQtYzdhYjlhZDNkOWU0In0.WdfiYdS6HVgsArcvSvCRaeJ9YAjW2ylpBbQiyyMOorw"  # Será atualizado automaticamente pelo script]*"(?:\s*#.*)?'
+        padrao = r'REFRESH_TOKEN = "[^"]*"(?:\s*#.*)?'
         novo_valor = f'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJuMWMxdGxveSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDYwNTcsImlhdCI6MTc2ODA3MDA1NywianRpIjoiNzUzZWUxMzktOWMwOS00ZmJhLTg2OTQtYzdhYjlhZDNkOWU0In0.WdfiYdS6HVgsArcvSvCRaeJ9YAjW2ylpBbQiyyMOorw"  # Será atualizado automaticamente pelo script
         
         # CORREÇÃO: count=1 substitui apenas a primeira ocorrência (linha 11), não todas!
