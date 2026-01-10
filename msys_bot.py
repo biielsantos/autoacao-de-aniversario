@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Configurações
 BASE_URL = "https://www.msysimob.com.br/msys-imob-web"
 CREDENTIALS_FILE = "credentials.json"
-REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJmejA1NjBlaSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk1Mzg2NjUsImlhdCI6MTc2ODAwMjY2NSwianRpIjoiOGFhMmFmZDUtNWYwYS00YTcyLWI2NDEtOWE0OGIzMDQzZjllIn0._rV6eUQsTskSX2otH1_0oijR6sEE8kk45Dc2lBnu04s"  # Será atualizado automaticamente pelo script
+REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://new-backend.botconversa.com.br/api/v1/webhooks-automation/catch/147503/g8en0hO6l4RJ/")
 API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-5082b7b70518")
 
@@ -52,9 +52,9 @@ def atualizar_refresh_token_no_codigo(novo_token):
         
         # Encontra e substitui a linha do REFRESH_TOKEN usando padrão genérico
         import re
-        # Padrão que encontra REFRESH_TOKEN = "qualquer_token_aqui" (inclui comentário no final)
-        padrao = r'REFRESH_TOKEN = "[^"]*"(?:\s*#.*)?'
-        novo_valor = f'REFRESH_TOKEN = "{novo_token}"  # Será atualizado automaticamente pelo script'
+        # Padrão que encontra REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script (inclui comentário no final)
+        padrao = r'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script]*"(?:\s*#.*)?'
+        novo_valor = f'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script
         
         novo_conteudo = re.sub(padrao, novo_valor, conteudo)
         
