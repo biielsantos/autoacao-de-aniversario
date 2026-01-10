@@ -26,7 +26,6 @@ jobs:
       
       - name: Instalar dependências
         run: |
-          cd github
           pip install -r requirements.txt
       
       - name: Executar script de aniversários
@@ -34,6 +33,5 @@ jobs:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           API_KEY_BOTCONVERSA: ${{ secrets.API_KEY_BOTCONVERSA }}
         run: |
-          cd github
           python msys_bot.py
 

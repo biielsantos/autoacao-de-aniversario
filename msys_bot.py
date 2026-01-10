@@ -77,8 +77,8 @@ def atualizar_refresh_token_no_codigo(novo_token):
                 # Obtém o diretório de trabalho do repositório (GITHUB_WORKSPACE está sempre na raiz)
                 workspace = os.getenv("GITHUB_WORKSPACE", ".")
                 
-                # O arquivo sempre está em github/msys_bot.py no repositório
-                caminho_arquivo_git = f"github/{arquivo}"
+                # O arquivo agora está na raiz (não mais em github/)
+                caminho_arquivo_git = arquivo
                 
                 # Configura git
                 subprocess.run(['git', 'config', '--global', 'user.name', 'github-actions[bot]'], 
