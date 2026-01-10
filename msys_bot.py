@@ -57,7 +57,8 @@ def atualizar_refresh_token_no_codigo(novo_token):
         padrao = r'REFRESH_TOKEN = "[^"]*"(?:\s*#.*)?'
         novo_valor = f'REFRESH_TOKEN = "{novo_token}"  # Será atualizado automaticamente pelo script'
         
-        novo_conteudo = re.sub(padrao, novo_valor, conteudo)
+        # CORREÇÃO: count=1 substitui apenas a primeira ocorrência (linha 11), não todas!
+        novo_conteudo = re.sub(padrao, novo_valor, conteudo, count=1)
         
         # Verifica se algo mudou
         if novo_conteudo == conteudo:
