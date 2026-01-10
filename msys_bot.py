@@ -4,132 +4,76 @@ import base64
 import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from supabase import create_client, Client
 
 # Configurações
 BASE_URL = "https://www.msysimob.com.br/msys-imob-web"
-CREDENTIALS_FILE = "credentials.json"
-REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJuMWMxdGxveSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDYwNTcsImlhdCI6MTc2ODA3MDA1NywianRpIjoiNzUzZWUxMzktOWMwOS00ZmJhLTg2OTQtYzdhYjlhZDNkOWU0In0.WdfiYdS6HVgsArcvSvCRaeJ9YAjW2ylpBbQiyyMOorw"  # Será atualizado automaticamente pelo script
+CREDENTIALS_FILE = "credentials.json"  # Mantido para compatibilidade, mas não será usado
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://new-backend.botconversa.com.br/api/v1/webhooks-automation/catch/147503/g8en0hO6l4RJ/")
 API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-5082b7b70518")
 
+# Configurações Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://rzkskovdlaktqidqeamp.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6a3Nrb3ZkbGFrdHFpZHFlYW1wIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODA4MzE3NCwiZXhwIjoyMDgzNjU5MTc0fQ.DJlNkDbT-0rYDm0RttPp-fe4lXMJFNFNfCxHe_xkCqo")
+
+def get_supabase_client() -> Client:
+    """Cria e retorna cliente Supabase"""
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
 def carregar_credentials():
-    """Carrega o refresh_token da variável REFRESH_TOKEN no código ou arquivo"""
-    # Primeiro tenta ler da variável REFRESH_TOKEN no código
-    if REFRESH_TOKEN and REFRESH_TOKEN != "SEU_REFRESH_TOKEN_AQUI":
-        return {"refresh_token": REFRESH_TOKEN}
-    
-    # Se não encontrar no código, tenta variável de ambiente (compatibilidade)
-    refresh_token_env = os.getenv("REFRESH_TOKEN")
-    if refresh_token_env:
-        return {"refresh_token": refresh_token_env}
-    
-    # Se não encontrar, tenta arquivo (desenvolvimento local)
+    """Carrega o refresh_token do Supabase"""
     try:
-        with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if not content:
-                print(f"Erro: Arquivo {CREDENTIALS_FILE} está vazio!")
-                print(f"\nPor favor, edite o arquivo ou a variável REFRESH_TOKEN no código")
-                return None
-            return json.loads(content)
-    except FileNotFoundError:
-        print(f"⚠️  REFRESH_TOKEN não configurado!")
-        print(f"\nPor favor, edite a variável REFRESH_TOKEN no código msys_bot.py")
+        supabase = get_supabase_client()
+        
+        # Busca o primeiro registro da tabela credentials
+        response = supabase.table("credentials").select("*").limit(1).execute()
+        
+        if response.data and len(response.data) > 0:
+            refresh_token = response.data[0].get("refresh_token")
+            if refresh_token:
+                print(f"✓ Token carregado do Supabase")
+                return {"refresh_token": refresh_token}
+        
+        print("⚠️  Nenhum refresh_token encontrado no Supabase!")
+        print("   Por favor, insira um token inicial na tabela 'credentials'")
         return None
-    except json.JSONDecodeError as e:
-        print(f"Erro: Arquivo {CREDENTIALS_FILE} com formato inválido!")
-        print(f"Detalhes do erro: {e}")
+        
+    except Exception as e:
+        print(f"❌ Erro ao carregar token do Supabase: {e}")
+        import traceback
+        print(traceback.format_exc())
         return None
 
 def atualizar_refresh_token_no_codigo(novo_token):
-    """Atualiza o refresh_token diretamente no arquivo Python e faz commit/push"""
-    arquivo = "msys_bot.py"
-    
+    """Atualiza o refresh_token no Supabase"""
     try:
-        # Lê o arquivo
-        with open(arquivo, 'r', encoding='utf-8') as f:
-            conteudo = f.read()
+        supabase = get_supabase_client()
         
-        # Encontra e substitui a linha do REFRESH_TOKEN usando padrão genérico
-        import re
-        # Padrão genérico que encontra REFRESH_TOKEN = "qualquer_token_aqui" (inclui comentário no final)
-        # IMPORTANTE: Usa padrão genérico [^"]* para encontrar QUALQUER token, não hardcoded!
-        padrao = r'REFRESH_TOKEN = "[^"]*"(?:\s*#.*)?'
-        novo_valor = f'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyJuMWMxdGxveSJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDYwNTcsImlhdCI6MTc2ODA3MDA1NywianRpIjoiNzUzZWUxMzktOWMwOS00ZmJhLTg2OTQtYzdhYjlhZDNkOWU0In0.WdfiYdS6HVgsArcvSvCRaeJ9YAjW2ylpBbQiyyMOorw"  # Será atualizado automaticamente pelo script
+        # Verifica se já existe registro
+        response = supabase.table("credentials").select("id").limit(1).execute()
         
-        # CORREÇÃO: count=1 substitui apenas a primeira ocorrência (linha 11), não todas!
-        novo_conteudo = re.sub(padrao, novo_valor, conteudo, count=1)
-        
-        # Verifica se algo mudou
-        if novo_conteudo == conteudo:
-            print("ℹ️  Refresh token já está atualizado")
-            return True
-        
-        # Salva o arquivo
-        with open(arquivo, 'w', encoding='utf-8') as f:
-            f.write(novo_conteudo)
-        
-        print("✓ Arquivo msys_bot.py atualizado com novo refresh_token")
-        
-        # Se estiver no GitHub Actions, faz commit e push
-        if os.getenv("GITHUB_ACTIONS"):
-            import subprocess
+        if response.data and len(response.data) > 0:
+            # Atualiza o registro existente
+            record_id = response.data[0]["id"]
+            supabase.table("credentials").update({
+                "refresh_token": novo_token,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", record_id).execute()
             
-            try:
-                # Obtém o diretório de trabalho do repositório (GITHUB_WORKSPACE está sempre na raiz)
-                workspace = os.getenv("GITHUB_WORKSPACE", ".")
-                
-                # O arquivo agora está na raiz (não mais em github/)
-                caminho_arquivo_git = arquivo
-                
-                # Configura git
-                subprocess.run(['git', 'config', '--global', 'user.name', 'github-actions[bot]'], 
-                             check=False, capture_output=True)
-                subprocess.run(['git', 'config', '--global', 'user.email', 'github-actions[bot]@users.noreply.github.com'], 
-                             check=False, capture_output=True)
-                
-                # Executa git add a partir da raiz do workspace
-                result = subprocess.run(['git', 'add', caminho_arquivo_git], 
-                                      cwd=workspace,
-                                      check=False, capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"⚠️  Erro ao adicionar arquivo: {result.stderr}")
-                    return False
-                
-                # Commit a partir da raiz
-                result = subprocess.run(['git', 'commit', '-m', 'Atualiza refresh_token automaticamente'], 
-                                      cwd=workspace,
-                                      check=False, capture_output=True, text=True)
-                if result.returncode != 0:
-                    if "nothing to commit" in result.stdout or "nothing to commit" in result.stderr:
-                        print("ℹ️  Nada para commitar (arquivo já atualizado)")
-                        return True
-                    print(f"⚠️  Erro no commit: {result.stderr}")
-                    return False
-                
-                # Push a partir da raiz
-                result = subprocess.run(['git', 'push'], 
-                                      cwd=workspace,
-                                      check=False, capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"⚠️  Erro no push: {result.stderr}")
-                    print(f"   O arquivo foi atualizado localmente, mas não foi enviado ao GitHub")
-                    return False
-                
-                print("✓ Commit e push realizados automaticamente!")
-                return True
-                
-            except Exception as e:
-                print(f"⚠️  Erro ao fazer commit/push: {e}")
-                print(f"   O arquivo foi atualizado localmente, mas não foi enviado ao GitHub")
-                import traceback
-                print(traceback.format_exc())
-                return False
+            print(f"✓ Refresh token atualizado no Supabase (id: {record_id})")
+        else:
+            # Cria novo registro se não existir
+            supabase.table("credentials").insert({
+                "refresh_token": novo_token,
+                "updated_at": datetime.utcnow().isoformat()
+            }).execute()
+            
+            print(f"✓ Novo refresh token criado no Supabase")
         
         return True
         
     except Exception as e:
-        print(f"❌ Erro ao atualizar arquivo: {e}")
+        print(f"❌ Erro ao atualizar token no Supabase: {e}")
         import traceback
         print(traceback.format_exc())
         return False
@@ -191,32 +135,23 @@ def atualizar_github_secret(secret_name, secret_value):
         return False
 
 def salvar_credentials(credentials):
-    """Salva o refresh_token atualizado diretamente no código Python"""
+    """Salva o refresh_token atualizado no Supabase"""
     new_refresh_token = credentials.get("refresh_token")
     
     if not new_refresh_token:
         return
     
-    # Verifica se o token mudou
-    if REFRESH_TOKEN == new_refresh_token:
-        print("ℹ️  Refresh token não mudou (continua o mesmo)")
-        return
+    print("\n🔄 Atualizando refresh_token no Supabase...")
     
-    print("\n🔄 Atualizando refresh_token no código...")
-    
-    # Atualiza no código Python
+    # Atualiza no Supabase
     if atualizar_refresh_token_no_codigo(new_refresh_token):
-        print("✓ Refresh token atualizado no código com sucesso!")
-        
-        # Se estiver no GitHub Actions e fez commit/push, avisa
-        if os.getenv("GITHUB_ACTIONS"):
-            print("💡 O novo refresh_token foi salvo no código e enviado ao GitHub")
-            print("   Na próxima execução, o novo token será usado automaticamente")
+        print("✓ Refresh token atualizado no Supabase com sucesso!")
+        print("💡 O novo refresh_token foi salvo no Supabase")
+        print("   Na próxima execução, o novo token será usado automaticamente")
     else:
-        print("❌ Falha ao atualizar refresh_token no código")
-        print(f"⚠️  Token atual: {REFRESH_TOKEN[:20]}...")
+        print("❌ Falha ao atualizar refresh_token no Supabase")
         print(f"⚠️  Novo token: {new_refresh_token[:20]}...")
-        print("⚠️  Atualize manualmente a variável REFRESH_TOKEN no código")
+        print("⚠️  Verifique a conexão com o Supabase")
 
 def renovar_refresh_token():
     """Renova apenas o refresh_token sem executar o resto do processo"""
@@ -739,11 +674,8 @@ def testar_atualizacao_token():
     # Token de teste (diferente do atual)
     token_teste = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.TESTE_TOKEN_PARA_VERIFICAR_ATUALIZACAO.AUTOMATICA"
     
-    print(f"\n📋 Token atual no código:")
-    print(f"   {REFRESH_TOKEN[:50]}...")
-    
     print(f"\n🔄 Testando atualização com token de teste...")
-    print(f"   (Não vai fazer commit no GitHub, apenas simula localmente)")
+    print(f"   (Vai atualizar no Supabase)")
     
     # Simula atualização
     credentials_teste = {"refresh_token": token_teste}
@@ -753,10 +685,9 @@ def testar_atualizacao_token():
     print("TESTE CONCLUÍDO")
     print("=" * 70)
     print("\n💡 Para testar no GitHub Actions:")
-    print("   1. Faça commit e push deste código")
-    print("   2. Execute o workflow manualmente")
-    print("   3. O script vai atualizar o REFRESH_TOKEN automaticamente")
-    print("   4. Verifique os logs para ver se fez commit/push")
+    print("   1. Execute o workflow manualmente")
+    print("   2. O script vai atualizar o refresh_token no Supabase automaticamente")
+    print("   3. Verifique os logs para confirmar a atualização")
 
 if __name__ == "__main__":
     import sys
@@ -769,4 +700,3 @@ if __name__ == "__main__":
         testar_atualizacao_token()
     else:
         main()
-
