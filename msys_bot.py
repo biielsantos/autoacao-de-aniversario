@@ -52,9 +52,9 @@ def atualizar_refresh_token_no_codigo(novo_token):
         
         # Encontra e substitui a linha do REFRESH_TOKEN usando padrão genérico
         import re
-        # Padrão que encontra REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script (inclui comentário no final)
-        padrao = r'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script]*"(?:\s*#.*)?'
-        novo_valor = f'REFRESH_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtc3lzX2ltb2JfYWJjaW1vYmlsaWFyaWF8IHwyNjQ3NiIsImF1ZCI6WyIwZGRiZXZ2NCJdLCJpc3MiOiJtc3lzaW1vYi5jb20uYnIiLCJleHAiOjE3OTk2MDM2OTcsImlhdCI6MTc2ODA2NzY5NywianRpIjoiN2Y2NWY0OTEtYmM1MC00MTBjLWE5NmItZDAwOTQ0NGVmMmQxIn0.PHHqRQf7e6i6-yZ8WeMl2zLfD0k9UURW-Nx979mzfH0"  # Será atualizado automaticamente pelo script
+        # Padrão genérico que encontra REFRESH_TOKEN = "qualquer_token_aqui" (inclui comentário no final)
+        padrao = r'REFRESH_TOKEN = "[^"]*"(?:\s*#.*)?'
+        novo_valor = f'REFRESH_TOKEN = "{novo_token}"  # Será atualizado automaticamente pelo script'
         
         novo_conteudo = re.sub(padrao, novo_valor, conteudo)
         
