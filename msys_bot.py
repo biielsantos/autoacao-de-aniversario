@@ -1,218 +1,72 @@
 import json
 import os
-import base64
+import time
 import requests
-from datetime import datetime
+import pandas as pd
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from supabase import create_client, Client
 
-# Configurações
+# --- CONFIGURAÇÕES ---
 BASE_URL = "https://www.msysimob.com.br/msys-imob-web"
-CREDENTIALS_FILE = "credentials.json"  # Mantido para compatibilidade, mas não será usado
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://new-backend.botconversa.com.br/api/v1/webhooks-automation/catch/147503/g8en0hO6l4RJ/")
 API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-5082b7b70518")
 
-# Configurações Supabase
+# Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://rzkskovdlaktqidqeamp.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6a3Nrb3ZkbGFrdHFpZHFlYW1wIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODA4MzE3NCwiZXhwIjoyMDgzNjU5MTc0fQ.DJlNkDbT-0rYDm0RttPp-fe4lXMJFNFNfCxHe_xkCqo")
 
 def get_supabase_client() -> Client:
-    """Cria e retorna cliente Supabase"""
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def carregar_credentials():
     """Carrega o refresh_token do Supabase"""
     try:
         supabase = get_supabase_client()
-        
-        # Busca o primeiro registro da tabela credentials
         response = supabase.table("credentials").select("*").limit(1).execute()
-        
         if response.data and len(response.data) > 0:
-            refresh_token = response.data[0].get("refresh_token")
-            if refresh_token:
-                print(f"✓ Token carregado do Supabase")
-                return {"refresh_token": refresh_token}
-        
+            return {"refresh_token": response.data[0].get("refresh_token")}
         print("⚠️  Nenhum refresh_token encontrado no Supabase!")
-        print("   Por favor, insira um token inicial na tabela 'credentials'")
         return None
-        
     except Exception as e:
-        print(f"❌ Erro ao carregar token do Supabase: {e}")
-        import traceback
-        print(traceback.format_exc())
+        print(f"❌ Erro Supabase: {e}")
         return None
 
-def atualizar_refresh_token_no_codigo(novo_token):
+def salvar_credentials(credentials):
     """Atualiza o refresh_token no Supabase"""
     try:
+        novo_token = credentials.get("refresh_token")
         supabase = get_supabase_client()
-        
-        # Verifica se já existe registro
         response = supabase.table("credentials").select("id").limit(1).execute()
         
-        if response.data and len(response.data) > 0:
-            # Atualiza o registro existente
-            record_id = response.data[0]["id"]
+        if response.data:
+            rec_id = response.data[0]["id"]
             supabase.table("credentials").update({
                 "refresh_token": novo_token,
                 "updated_at": datetime.utcnow().isoformat()
-            }).eq("id", record_id).execute()
-            
-            print(f"✓ Refresh token atualizado no Supabase (id: {record_id})")
+            }).eq("id", rec_id).execute()
         else:
-            # Cria novo registro se não existir
             supabase.table("credentials").insert({
                 "refresh_token": novo_token,
                 "updated_at": datetime.utcnow().isoformat()
             }).execute()
-            
-            print(f"✓ Novo refresh token criado no Supabase")
-        
-        return True
-        
+        print("✓ Token salvo no Supabase.")
     except Exception as e:
-        print(f"❌ Erro ao atualizar token no Supabase: {e}")
-        import traceback
-        print(traceback.format_exc())
-        return False
-
-def atualizar_github_secret(secret_name, secret_value):
-    """Atualiza um secret do GitHub usando a API"""
-    try:
-        from nacl import encoding, public
-    except ImportError:
-        print("⚠️  PyNaCl não instalado. Instale com: pip install PyNaCl")
-        return False
-    
-    # Obtém informações do repositório e token do GitHub Actions
-    github_token = os.getenv("GITHUB_TOKEN")
-    github_repo = os.getenv("GITHUB_REPOSITORY")  # formato: owner/repo
-    github_api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
-    
-    if not github_token or not github_repo:
-        print("⚠️  GITHUB_TOKEN ou GITHUB_REPOSITORY não encontrado")
-        return False
-    
-    try:
-        # Passo 1: Obter a chave pública do repositório
-        headers = {
-            "Authorization": f"token {github_token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        # Obtém a chave pública do repositório
-        public_key_url = f"{github_api_url}/repos/{github_repo}/actions/secrets/public-key"
-        response = requests.get(public_key_url, headers=headers)
-        response.raise_for_status()
-        
-        public_key_data = response.json()
-        key_id = public_key_data["key_id"]
-        public_key = public_key_data["key"]
-        
-        # Passo 2: Criptografar o valor do secret usando a chave pública
-        public_key_obj = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
-        sealed_box = public.SealedBox(public_key_obj)
-        encrypted_value = sealed_box.encrypt(secret_value.encode("utf-8"))
-        encrypted_value_b64 = base64.b64encode(encrypted_value).decode("utf-8")
-        
-        # Passo 3: Atualizar o secret
-        update_url = f"{github_api_url}/repos/{github_repo}/actions/secrets/{secret_name}"
-        payload = {
-            "encrypted_value": encrypted_value_b64,
-            "key_id": key_id
-        }
-        
-        response = requests.put(update_url, json=payload, headers=headers)
-        response.raise_for_status()
-        
-        return True
-    except Exception as e:
-        print(f"Erro ao atualizar secret do GitHub: {e}")
-        if hasattr(e, 'response') and hasattr(e.response, 'text'):
-            print(f"Resposta da API: {e.response.text}")
-        return False
-
-def salvar_credentials(credentials):
-    """Salva o refresh_token atualizado no Supabase"""
-    new_refresh_token = credentials.get("refresh_token")
-    
-    if not new_refresh_token:
-        return
-    
-    print("\n🔄 Atualizando refresh_token no Supabase...")
-    
-    # Atualiza no Supabase
-    if atualizar_refresh_token_no_codigo(new_refresh_token):
-        print("✓ Refresh token atualizado no Supabase com sucesso!")
-        print("💡 O novo refresh_token foi salvo no Supabase")
-        print("   Na próxima execução, o novo token será usado automaticamente")
-    else:
-        print("❌ Falha ao atualizar refresh_token no Supabase")
-        print(f"⚠️  Novo token: {new_refresh_token[:20]}...")
-        print("⚠️  Verifique a conexão com o Supabase")
-
-def renovar_refresh_token():
-    """Renova apenas o refresh_token sem executar o resto do processo"""
-    print("=" * 50)
-    print("Renovação de Refresh Token")
-    print("=" * 50)
-    
-    # 1. Carrega credentials
-    print("\n[1/2] Carregando credentials...")
-    credentials = carregar_credentials()
-    if not credentials:
-        return False
-    
-    refresh_token = credentials.get("refresh_token")
-    if not refresh_token:
-        print("Erro: refresh_token não encontrado!")
-        return False
-    
-    # 2. Obtém novo access token (e novo refresh_token)
-    print("\n[2/2] Obtendo novo refresh_token...")
-    access_token, new_refresh_token = obter_access_token(refresh_token)
-    if not access_token or not new_refresh_token:
-        print("❌ Falha ao renovar refresh_token!")
-        return False
-    
-    print("✓ Novo refresh_token obtido com sucesso!")
-    
-    # 3. Atualiza o refresh_token no código
-    credentials["refresh_token"] = new_refresh_token
-    salvar_credentials(credentials)
-    
-    print("\n" + "=" * 50)
-    print("Renovação concluída com sucesso!")
-    print("=" * 50)
-    return True
+        print(f"❌ Erro ao salvar token: {e}")
 
 def obter_access_token(refresh_token):
-    """Obtém um novo access token usando o refresh token"""
     url = f"{BASE_URL}/api/openapi/v1/login"
-    params = {"refresh-token": refresh_token}
-    
     try:
-        response = requests.post(url, params=params)
+        response = requests.post(url, params={"refresh-token": refresh_token}, timeout=30)
         response.raise_for_status()
-        
         data = response.json()
-        access_token = data.get("accesstoken")
-        new_refresh_token = data.get("refreshtoken")
-        
-        if not access_token or not new_refresh_token:
-            raise ValueError("Resposta da API não contém tokens válidos")
-        
-        return access_token, new_refresh_token
-    except requests.exceptions.RequestException as e:
-        print(f"Erro ao obter access token: {e}")
-        if hasattr(e.response, 'text'):
-            print(f"Resposta do servidor: {e.response.text}")
+        return data.get("accesstoken"), data.get("refreshtoken")
+    except Exception as e:
+        print(f"Erro login: {e}")
         return None, None
 
-def buscar_pessoas(access_token, page_size=100, limite=None):
-    """Busca pessoas ativas com paginação"""
+def buscar_pessoas_blindado(access_token, page_size=100):
+    """Busca com RETRY AUTOMÁTICO para não falhar no meio das 26 mil pessoas"""
     url = f"{BASE_URL}/api/openapi/v1/person"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -221,482 +75,212 @@ def buscar_pessoas(access_token, page_size=100, limite=None):
     
     todas_pessoas = []
     first = 0
+    tentativas_erro_consecutivo = 0
     
     while True:
+        # ATENÇÃO: Removi o filtro "indStatus": "A" para pegar TODO MUNDO (Inativos também)
+        # Se quiser só ativos, descomente a linha abaixo
         payload = {
-            "indStatus": "A",  # Apenas ativos
+            # "indStatus": "A", 
             "pageSize": page_size,
             "first": first
         }
         
-        try:
-            response = requests.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            items = data.get("items", [])
-            
-            if not items:
+        sucesso = False
+        # Tenta até 3 vezes baixar a mesma página se der erro
+        for tentativa in range(3):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=45)
+                response.raise_for_status()
+                data = response.json()
+                items = data.get("items", [])
+                
+                if not items:
+                    print("✓ Fim da lista encontrado.")
+                    return todas_pessoas
+                
+                todas_pessoas.extend(items)
+                print(f"✓ Baixados: {len(items)} (Total acumulado: {len(todas_pessoas)})")
+                
+                total_itens_api = data.get("totalItens", 0)
+                if len(todas_pessoas) >= total_itens_api and total_itens_api > 0:
+                    print("✓ Todos os registros foram baixados.")
+                    return todas_pessoas
+
+                first += page_size
+                sucesso = True
+                tentativas_erro_consecutivo = 0
+                break # Sai do loop de tentativas e vai pra proxima pagina
+                
+            except Exception as e:
+                print(f"⚠️ Erro na página {first} (Tentativa {tentativa+1}/3): {e}")
+                time.sleep(5) # Espera 5 segundos antes de tentar de novo
+        
+        if not sucesso:
+            print("❌ Falha crítica: Não foi possível baixar a página após 3 tentativas.")
+            tentativas_erro_consecutivo += 1
+            # Se falhar muitas vezes seguidas, aborta pra não ficar infinito
+            if tentativas_erro_consecutivo > 5:
+                print("❌ Abortando busca por excesso de erros.")
                 break
-            
-            todas_pessoas.extend(items)
-            print(f"✓ Página processada: {len(items)} pessoas (Total: {len(todas_pessoas)})")
-            
-            # Se há limite e já atingiu, para
-            if limite and len(todas_pessoas) >= limite:
-                todas_pessoas = todas_pessoas[:limite]
-                break
-            
-            # Verifica se há mais páginas
-            total_items = data.get("totalItens", 0)
-            if len(todas_pessoas) >= total_items:
-                break
-            
-            first += page_size
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Erro ao buscar pessoas: {e}")
-            if hasattr(e.response, 'text'):
-                print(f"Resposta do servidor: {e.response.text}")
+            # Tenta pular para a próxima página para não travar tudo?
+            # Melhor parar e processar o que tem.
             break
-    
+            
     return todas_pessoas
 
-def extrair_telefone(contact_vos):
-    """Extrai o telefone principal dos contatos"""
-    if not contact_vos:
-        return ""
-    
-    # contactVOs é um objeto/dict, não uma lista!
-    if not isinstance(contact_vos, dict):
-        return ""
-    
-    # Acessa phoneVOs diretamente do objeto contactVOs
-    phone_vos = contact_vos.get("phoneVOs", [])
-    if phone_vos and isinstance(phone_vos, list) and len(phone_vos) > 0:
-        phone = phone_vos[0]  # Pega o primeiro telefone
-        if isinstance(phone, dict):
-            ddd = phone.get("dddPhone", "")
-            num = phone.get("numPhone", "")
-            if ddd and num:
-                return f"({ddd}) {num}"
-    
-    return ""
-
-def buscar_data_nascimento(access_token, idt_person):
-    """Busca a data de nascimento de uma pessoa usando o endpoint findForEdit"""
+def buscar_data_individual(access_token, idt_person):
+    """Busca detalhes de uma pessoa"""
     url = f"{BASE_URL}/api/openapi/v1/person/findForEdit"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    
+    headers = {"Authorization": f"Bearer {access_token}"}
     try:
-        response = requests.get(url, params={"code": idt_person}, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # Tenta encontrar a data de nascimento em vários lugares
-        # Pode estar em personIndividualForm.birth ou personIndividual.birth
-        person_individual_form = data.get("personIndividualForm")
-        if person_individual_form and isinstance(person_individual_form, dict):
-            birth = person_individual_form.get("birth")
-            if birth:
-                try:
-                    if isinstance(birth, (int, float)):
-                        return datetime.fromtimestamp(birth / 1000).strftime("%Y-%m-%d")
-                    else:
-                        return str(birth).split('T')[0]
-                except:
-                    return str(birth)
-        
-        person_individual = data.get("personIndividual")
-        if person_individual and isinstance(person_individual, dict):
-            birth = person_individual.get("birth")
-            if birth:
-                try:
-                    if isinstance(birth, (int, float)):
-                        return datetime.fromtimestamp(birth / 1000).strftime("%Y-%m-%d")
-                    else:
-                        return str(birth).split('T')[0]
-                except:
-                    return str(birth)
-        
-        # Tenta dtaBirth
-        dta_birth = data.get("dtaBirth")
-        if dta_birth:
-            try:
-                if isinstance(dta_birth, (int, float)):
-                    return datetime.fromtimestamp(dta_birth / 1000).strftime("%Y-%m-%d")
-                else:
-                    return str(dta_birth).split('T')[0]
-            except:
-                return str(dta_birth)
-            
-    except requests.exceptions.RequestException:
-        # Silencia erros individuais para não poluir o output
-        return None
-    except Exception:
-        return None
-    
+        response = requests.get(url, params={"code": idt_person}, headers=headers, timeout=20)
+        if response.status_code == 200:
+            data = response.json()
+            # Tenta achar a data em todos os cantos possíveis
+            locais = [
+                data.get("personIndividualForm", {}).get("birth"),
+                data.get("personIndividual", {}).get("birth"),
+                data.get("dtaBirth")
+            ]
+            for data_raw in locais:
+                if data_raw: return data_raw
+    except:
+        pass
     return None
 
-def processar_pessoas(pessoas, access_token=None, buscar_datas_nascimento=False):
-    """Processa todas as pessoas e extrai dados relevantes com otimização paralela"""
-    pessoas_processadas = []
-    total = len(pessoas)
+def processar_aniversariantes_hoje(pessoas, access_token):
+    """Processa a lista e busca detalhes SOMENTE de quem vale a pena"""
     
-    # FASE 1: Processa dados locais e identifica quem precisa buscar data
-    pessoas_preparadas = []
-    pessoas_para_buscar = []  # Lista de (índice, idt_person) para buscar datas
+    # Data de Hoje (Brasília)
+    tz_br = timezone(timedelta(hours=-3))
+    hoje = datetime.now(tz_br)
+    dia_hoje = hoje.day
+    mes_hoje = hoje.month
     
-    for idx, pessoa in enumerate(pessoas):
-        # Verifica se pessoa é um dicionário
-        if not isinstance(pessoa, dict):
-            continue
-            
-        # Extrai dados da pessoa
-        nome = pessoa.get("namPerson", "")
-        idt_person = pessoa.get("idtPerson")
-        contact_vos = pessoa.get("contactVOs")
-        
-        # Garante que contact_vos é um dict (não lista!)
-        if not isinstance(contact_vos, dict):
-            contact_vos = None
-            
-        telefone = extrair_telefone(contact_vos)
-        
-        # Tipo de pessoa: usa firstType ou typesSeparate se personType for null
-        tipo_pessoa = pessoa.get("personType")
-        if not tipo_pessoa:
-            tipo_pessoa = pessoa.get("firstType", "")
-            if not tipo_pessoa:
-                tipo_pessoa = pessoa.get("typesSeparate", "")
-        
-        # Extrai data de nascimento dos campos locais
-        data_nascimento = ""
-        
-        # Primeiro tenta os campos locais
-        dta_birth = pessoa.get("dtaBirth")
-        if dta_birth:
-            try:
-                if isinstance(dta_birth, (int, float)):
-                    data_nascimento = datetime.fromtimestamp(dta_birth / 1000).strftime("%Y-%m-%d")
-                else:
-                    data_nascimento = str(dta_birth).split('T')[0]
-            except:
-                data_nascimento = str(dta_birth)
-        
-        # Se não encontrou nos campos locais
-        if not data_nascimento:
-            person_individual = pessoa.get("personIndividualForm")
-            if person_individual and isinstance(person_individual, dict):
-                birth_str = person_individual.get("birth")
-                if birth_str:
-                    try:
-                        data_nascimento = birth_str.split('T')[0]
-                    except:
-                        data_nascimento = str(birth_str)
-        
-        if not data_nascimento:
-            person_individual = pessoa.get("personIndividual")
-            if person_individual and isinstance(person_individual, dict):
-                birth_str = person_individual.get("birth")
-                if birth_str:
-                    try:
-                        data_nascimento = birth_str.split('T')[0]
-                    except:
-                        data_nascimento = str(birth_str)
-        
-        # Prepara dados da pessoa
-        pessoa_dados = {
-            "nome": nome,
-            "telefone": telefone,
-            "tipo_pessoa": tipo_pessoa,
-            "data_nascimento": data_nascimento,
-            "idt_person": idt_person
-        }
-        
-        # Se precisa buscar data e tem condições, adiciona à lista para buscar em paralelo
-        if not data_nascimento and buscar_datas_nascimento and access_token and idt_person:
-            pessoas_para_buscar.append((len(pessoas_preparadas), idt_person))
-        
-        pessoas_preparadas.append(pessoa_dados)
+    print(f"\n🎂 Buscando aniversariantes de: {dia_hoje}/{mes_hoje}")
     
-    # FASE 2: Busca datas em paralelo (se necessário)
-    if pessoas_para_buscar and access_token:
-        print(f"\n📡 Buscando datas de nascimento para {len(pessoas_para_buscar)} pessoas em paralelo...")
+    aniversariantes_confirmados = []
+    
+    # Otimização: Lista de pessoas para buscar detalhes em paralelo
+    # Só vamos buscar detalhes se a gente NÃO achar a data na listagem inicial
+    fila_para_buscar_detalhe = []
+    
+    print("1. Filtrando dados locais...")
+    for p in pessoas:
+        nome = p.get("namPerson", "")
+        # Tenta pegar data do resumo
+        dta_raw = p.get("dtaBirth")
         
-        # Dicionário para armazenar resultados: índice -> data
-        resultados_datas = {}
-        
-        # Usa ThreadPoolExecutor para fazer requisições em paralelo
-        # max_workers=15 significa 15 requisições simultâneas
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            # Submete todas as tarefas
-            future_to_idx = {
-                executor.submit(buscar_data_nascimento, access_token, idt_person): idx
-                for idx, idt_person in pessoas_para_buscar
+        # Se tem data no resumo, já verifica
+        if dta_raw:
+            if verificar_data_match(dta_raw, dia_hoje, mes_hoje):
+                # Achou! Adiciona na lista
+                aniversariantes_confirmados.append(formatar_pessoa(p, dta_raw))
+        else:
+            # Se não tem data no resumo, joga pra fila pra buscar detalhe
+            if p.get("idtPerson"):
+                fila_para_buscar_detalhe.append(p)
+
+    print(f"   - Achados direto na lista: {len(aniversariantes_confirmados)}")
+    print(f"   - Precisam buscar detalhe: {len(fila_para_buscar_detalhe)}")
+    
+    # Busca detalhes em paralelo (limitado para não derrubar a API)
+    if fila_para_buscar_detalhe:
+        print("2. Buscando detalhes em paralelo (pode demorar)...")
+        with ThreadPoolExecutor(max_workers=10) as executor: # Reduzi workers pra evitar erro
+            future_to_person = {
+                executor.submit(buscar_data_individual, access_token, p["idtPerson"]): p 
+                for p in fila_para_buscar_detalhe
             }
             
-            # Processa resultados conforme vão completando
-            completadas = 0
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                completadas += 1
-                try:
-                    data_encontrada = future.result()
-                    if data_encontrada:
-                        resultados_datas[idx] = data_encontrada
-                except Exception:
-                    # Ignora erros individuais
-                    pass
+            total = len(fila_para_buscar_detalhe)
+            count = 0
+            for future in as_completed(future_to_person):
+                p = future_to_person[future]
+                count += 1
+                if count % 200 == 0: print(f"   Progresso: {count}/{total}")
                 
-                # Mostra progresso a cada 50 requisições completadas
-                if completadas % 50 == 0:
-                    print(f"  Progresso: {completadas}/{len(pessoas_para_buscar)} datas buscadas...")
-        
-        # Atualiza as datas encontradas
-        for idx, data_encontrada in resultados_datas.items():
-            pessoas_preparadas[idx]["data_nascimento"] = data_encontrada
-        
-        print(f"✓ Busca de datas concluída!")
-    
-    # FASE 3: Aplica filtros e gera lista final
-    for pessoa_dados in pessoas_preparadas:
-        nome = pessoa_dados["nome"]
-        telefone = pessoa_dados["telefone"]
-        tipo_pessoa = pessoa_dados["tipo_pessoa"]
-        data_nascimento = pessoa_dados["data_nascimento"]
-        
-        # FILTRO 1: Pula pessoas com tipo "GUARANTOR"
-        if tipo_pessoa and "GUARANTOR" in str(tipo_pessoa).upper():
-            continue
-        
-        # FILTRO 2: Pula pessoas com tipo "BUYER"
-        if tipo_pessoa and "BUYER" in str(tipo_pessoa).upper():
-            continue
-        
-        # FILTRO 3: Pula pessoas que não têm telefone OU não têm data de aniversário
-        # Precisa ter AMBOS para ser incluída
-        telefone_vazio = not telefone or telefone.strip() == ""
-        data_vazia = not data_nascimento or data_nascimento.strip() == ""
-        
-        if telefone_vazio or data_vazia:
-            continue
-        
-        pessoas_processadas.append({
-            "Nome": nome,
-            "Data de Aniversário": data_nascimento,
-            "Telefone": telefone,
-            "Tipo de Pessoa": tipo_pessoa
-        })
-    
-    return pessoas_processadas
+                dta_detalhe = future.result()
+                if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
+                    aniversariantes_confirmados.append(formatar_pessoa(p, dta_detalhe))
 
-def filtrar_aniversariantes_hoje(pessoas_processadas):
-    """Filtra pessoas que fazem aniversário hoje (mesmo mês e dia) - usando timezone de Brasília"""
-    from datetime import timezone, timedelta
-    
-    # Define timezone de Brasília (UTC-3)
-    brasilia_tz = timezone(timedelta(hours=-3))
-    
-    # Pega a data atual no timezone de Brasília
-    hoje = datetime.now(brasilia_tz)
-    mes_atual = hoje.month
-    dia_atual = hoje.day
-    
-    # Debug: mostra a data sendo usada
-    print(f"📅 Verificando aniversariantes de: {dia_atual:02d}/{mes_atual:02d} (timezone Brasília)")
-    
-    aniversariantes = []
-    
-    for pessoa in pessoas_processadas:
-        data_aniversario = pessoa.get("Data de Aniversário", "")
-        
-        if not data_aniversario or data_aniversario.strip() == "":
-            continue
-        
-        try:
-            # Tenta fazer parse da data (pode estar no formato YYYY-MM-DD)
-            if "-" in data_aniversario:
-                partes = data_aniversario.split("-")
-                if len(partes) >= 3:
-                    ano_aniversario = int(partes[0])
-                    mes_aniversario = int(partes[1])
-                    dia_aniversario = int(partes[2])
-                    
-                    if mes_aniversario == mes_atual and dia_aniversario == dia_atual:
-                        aniversariantes.append({
-                            "nome": pessoa.get("Nome", ""),
-                            "telefone": pessoa.get("Telefone", "")
-                        })
-        except (ValueError, IndexError):
-            # Se não conseguir fazer parse, ignora essa pessoa
-            continue
-    
-    return aniversariantes
+    return aniversariantes_confirmados
 
-def formatar_telefone_botconversa(telefone):
-    """
-    Formata telefone para o padrão BotConversa: +5511912341234
-    Formato: +55 + DDD + 9 + TELEFONE (total 13 dígitos após o +)
-    """
-    # Remove caracteres não numéricos
-    telefone_limpo = "".join(filter(str.isdigit, telefone))
-    
-    # Garante que comece com 55 (DDI do Brasil)
-    if not telefone_limpo.startswith('55'):
-        telefone_limpo = '55' + telefone_limpo
-    
-    # Adiciona o + no início
-    telefone_formatado = '+' + telefone_limpo
-    
-    return telefone_formatado
-
-def enviar_webhook(nome, telefone, webhook_url, api_key):
-    """Envia dados para webhook do BotConversa"""
+def verificar_data_match(data_raw, dia_alvo, mes_alvo):
+    """Verifica se a data bate com o dia/mês alvo"""
     try:
-        # Formata o telefone para padrão BotConversa: +5511912341234
-        telefone_formatado = formatar_telefone_botconversa(telefone)
-        
-        payload = {
-            "nome": nome,
-            "telefone": telefone_formatado
-        }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "apikey": api_key
-        }
-        
-        response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code in [200, 201]:
-            return True
+        if isinstance(data_raw, (int, float)):
+            dt = datetime.fromtimestamp(data_raw / 1000)
         else:
-            print(f"  Status code: {response.status_code} - Resposta: {response.text[:100]}")
-            return False
-    except requests.exceptions.RequestException as e:
-        print(f"  Erro ao enviar webhook para {nome}: {e}")
-        return False
-    except Exception as e:
-        print(f"  Erro inesperado ao enviar webhook para {nome}: {e}")
+            # Tenta string ISO
+            clean_date = str(data_raw).split("T")[0]
+            dt = datetime.strptime(clean_date, "%Y-%m-%d")
+            
+        return dt.day == dia_alvo and dt.month == mes_alvo
+    except:
         return False
 
-def enviar_aniversariantes_webhook(aniversariantes, webhook_url, api_key):
-    """Envia todos os aniversariantes via webhook (um por um)"""
-    if not aniversariantes:
-        print("\n📅 Nenhum aniversariante encontrado para hoje!")
+def formatar_pessoa(p_dict, data_raw):
+    """Extrai telefone e formata dados"""
+    # Formata Telefone
+    tel = ""
+    contact = p_dict.get("contactVOs")
+    if isinstance(contact, dict):
+        phones = contact.get("phoneVOs", [])
+        if phones and len(phones) > 0:
+            tel = f"55{phones[0].get('dddPhone','')}{phones[0].get('numPhone','')}"
+    
+    return {
+        "nome": p_dict.get("namPerson"),
+        "telefone": tel,
+        "data_raw": data_raw
+    }
+
+def enviar_webhook(pessoa):
+    if not pessoa['telefone'] or len(pessoa['telefone']) < 10:
+        print(f"   Ignorado (sem telefone): {pessoa['nome']}")
         return
-    
-    print(f"\n🎂 Encontrados {len(aniversariantes)} aniversariante(s) hoje!")
-    print(f"📤 Enviando para BotConversa (um por um)...")
-    
-    sucesso = 0
-    falhas = 0
-    
-    for aniversariante in aniversariantes:
-        nome = aniversariante.get("nome", "")
-        telefone_original = aniversariante.get("telefone", "")
-        telefone_formatado = formatar_telefone_botconversa(telefone_original)
-        
-        print(f"  Enviando: {nome} - {telefone_formatado}")
-        
-        if enviar_webhook(nome, telefone_original, webhook_url, api_key):
-            sucesso += 1
-            print(f"    ✓ Enviado com sucesso!")
+
+    try:
+        payload = {
+            "nome": pessoa['nome'],
+            "telefone": pessoa['telefone'], # Já formatado com 55
+            "data_nascimento": str(pessoa['data_raw'])
+        }
+        headers = {"apikey": API_KEY_BOTCONVERSA}
+        resp = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+        if resp.status_code in [200, 201]:
+            print(f"   ✓ ENVIADO: {pessoa['nome']}")
         else:
-            falhas += 1
-            print(f"    ✗ Falha no envio")
-    
-    print(f"\n✓ Webhooks enviados: {sucesso} sucesso, {falhas} falhas")
+            print(f"   ❌ Erro envio: {resp.text}")
+    except Exception as e:
+        print(f"   ❌ Erro conexão: {e}")
 
 def main():
-    """Função principal"""
-    print("=" * 50)
-    print("MSYS Imob - Verificador de Aniversários")
-    print("=" * 50)
+    print("=== INICIANDO ROBÔ DE ANIVERSÁRIOS BLINDADO ===")
     
-    # 1. Carrega credentials
-    print("\n[1/4] Carregando credentials...")
-    credentials = carregar_credentials()
-    if not credentials:
-        return
+    # 1. Auth
+    creds = carregar_credentials()
+    if not creds: return
+    access, new_refresh = obter_access_token(creds['refresh_token'])
+    if not access: return
+    salvar_credentials({'refresh_token': new_refresh})
     
-    refresh_token = credentials.get("refresh_token")
-    if not refresh_token:
-        print("Erro: refresh_token não encontrado!")
-        return
+    # 2. Busca (Com Retry)
+    print("\n--- ETAPA 1: Baixar Base de Clientes ---")
+    todas_pessoas = buscar_pessoas_blindado(access)
+    print(f"Total Final Baixado: {len(todas_pessoas)}")
     
-    # 2. Obtém access token
-    print("\n[2/4] Obtendo access token...")
-    access_token, new_refresh_token = obter_access_token(refresh_token)
-    if not access_token:
-        return
+    # 3. Filtro e Envio
+    print("\n--- ETAPA 2: Filtrar e Enviar ---")
+    aniversariantes = processar_aniversariantes_hoje(todas_pessoas, access)
     
-    print("✓ Access token obtido com sucesso!")
-    
-    # Atualiza o refresh token (automaticamente no GitHub Actions ou localmente)
-    credentials["refresh_token"] = new_refresh_token
-    salvar_credentials(credentials)
-    
-    # 3. Busca pessoas ativas
-    print("\n[3/4] Buscando pessoas ativas...")
-    pessoas = buscar_pessoas(access_token)
-    if not pessoas:
-        print("Nenhuma pessoa encontrada!")
-        return
-    
-    print(f"✓ Total de pessoas encontradas: {len(pessoas)}")
-    
-    # 4. Processa todas as pessoas
-    print("\n[4/4] Processando dados das pessoas...")
-    print("⚠️  Buscando datas de nascimento (pode demorar alguns minutos)...")
-    pessoas_processadas = processar_pessoas(pessoas, access_token=access_token, buscar_datas_nascimento=True)
-    
-    # 5. Filtra e envia aniversariantes de hoje via webhook
-    print("\n[5/5] Verificando aniversariantes de hoje...")
-    aniversariantes = filtrar_aniversariantes_hoje(pessoas_processadas)
-    enviar_aniversariantes_webhook(aniversariantes, WEBHOOK_URL, API_KEY_BOTCONVERSA)
-    
-    print("\n" + "=" * 50)
-    print("Processo concluído com sucesso!")
-    print("=" * 50)
-
-def testar_atualizacao_token():
-    """Função para testar a atualização automática do refresh_token"""
-    print("=" * 70)
-    print("TESTE: Atualização automática do refresh_token")
-    print("=" * 70)
-    
-    # Token de teste (diferente do atual)
-    token_teste = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.TESTE_TOKEN_PARA_VERIFICAR_ATUALIZACAO.AUTOMATICA"
-    
-    print(f"\n🔄 Testando atualização com token de teste...")
-    print(f"   (Vai atualizar no Supabase)")
-    
-    # Simula atualização
-    credentials_teste = {"refresh_token": token_teste}
-    salvar_credentials(credentials_teste)
-    
-    print(f"\n" + "=" * 70)
-    print("TESTE CONCLUÍDO")
-    print("=" * 70)
-    print("\n💡 Para testar no GitHub Actions:")
-    print("   1. Execute o workflow manualmente")
-    print("   2. O script vai atualizar o refresh_token no Supabase automaticamente")
-    print("   3. Verifique os logs para confirmar a atualização")
+    print(f"\n🎉 Total Aniversariantes Hoje: {len(aniversariantes)}")
+    for aniv in aniversariantes:
+        enviar_webhook(aniv)
+        
+    print("\n=== CONCLUÍDO ===")
 
 if __name__ == "__main__":
-    import sys
-    
-    # Se passar --renovar como argumento, apenas renova o token
-    if len(sys.argv) > 1 and sys.argv[1] == "--renovar":
-        renovar_refresh_token()
-    # Se passar --teste-atualizar como argumento, executa o teste
-    elif len(sys.argv) > 1 and sys.argv[1] == "--teste-atualizar":
-        testar_atualizacao_token()
-    else:
-        main()
+    main()
