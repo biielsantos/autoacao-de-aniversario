@@ -2,7 +2,7 @@ import json
 import os
 import time
 import requests
-import pandas as pd
+# import pandas as pd
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from supabase import create_client, Client
