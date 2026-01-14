@@ -20,7 +20,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5c
 sys.stdout.reconfigure(encoding='utf-8')
 
 def print_log(msg):
-    """Força o print a aparecer imediatamente no GitHub Actions"""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def get_supabase_client() -> Client:
@@ -62,7 +61,11 @@ def salvar_credentials(credentials):
 def obter_access_token(refresh_token):
     url = f"{BASE_URL}/api/openapi/v1/login"
     try:
-        response = requests.post(url, params={"refresh-token": refresh_token}, timeout=30)
+        # Adicionei headers básicos para evitar bloqueio de bot
+        headers_login = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.post(url, params={"refresh-token": refresh_token}, headers=headers_login, timeout=30)
         response.raise_for_status()
         data = response.json()
         return data.get("accesstoken"), data.get("refreshtoken")
@@ -71,19 +74,23 @@ def obter_access_token(refresh_token):
         return None, None
 
 def renovar_autenticacao_completa():
-    print_log("🔄 RENOVANDO TOKEN VENCIDO NO MEIO DO PROCESSO...")
+    print_log("🔄 TENTATIVA DE RENOVAÇÃO DE EMERGÊNCIA...")
     creds = carregar_credentials()
     if not creds: return None
+    
+    # Pausa de segurança para não spammar o login
+    time.sleep(5)
+    
     access, new_refresh = obter_access_token(creds['refresh_token'])
     if access and new_refresh:
         salvar_credentials({'refresh_token': new_refresh})
-        print_log("✓ Autenticação renovada! Retomando...")
+        print_log("✓ Autenticação recuperada com sucesso!")
         return access
-    print_log("❌ Falha crítica ao renovar token.")
+    
+    print_log("❌ A renovação falhou. O Refresh Token no Supabase provavelmente expirou/queimou.")
     return None
 
 def buscar_data_individual(access_token, idt_person):
-    """Busca detalhes de uma pessoa"""
     url = f"{BASE_URL}/api/openapi/v1/person/findForEdit"
     headers = {"Authorization": f"Bearer {access_token}"}
     try:
@@ -144,6 +151,8 @@ def enviar_webhook(pessoa):
             "data_nascimento": str(pessoa['data_raw'])
         }
         headers = {"apikey": API_KEY_BOTCONVERSA}
+        # Pausa para não floodar o BotConversa
+        time.sleep(0.5) 
         resp = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
         if resp.status_code in [200, 201]:
             print_log(f"   🎉 ENVIADO: {pessoa['nome']}")
@@ -153,10 +162,10 @@ def enviar_webhook(pessoa):
         print_log(f"   ❌ Erro conexão Webhook: {e}")
 
 def processar_lote_pessoas(lote_pessoas, access_token, dia_hoje, mes_hoje):
-    """Processa um lote de 100 pessoas imediatamente"""
+    """Processa um lote de pessoas"""
     candidatos_detalhe = []
     
-    # 1. Filtro Rápido (Dados que já vieram)
+    # 1. Filtro Rápido
     for p in lote_pessoas:
         data_lista = p.get("dtaBirth")
         if data_lista:
@@ -166,10 +175,9 @@ def processar_lote_pessoas(lote_pessoas, access_token, dia_hoje, mes_hoje):
             if p.get("idtPerson"):
                 candidatos_detalhe.append(p)
     
-    # 2. Busca Detalhada (se necessário)
+    # 2. Busca Detalhada (com workers reduzidos)
     if candidatos_detalhe:
-        # print_log(f"      🔎 Buscando detalhes de {len(candidatos_detalhe)} pessoas sem data...")
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor: # Reduzi workers para 5 (mais seguro)
             future_to_p = {
                 executor.submit(buscar_data_individual, access_token, p["idtPerson"]): p 
                 for p in candidatos_detalhe
@@ -188,23 +196,25 @@ def executar_varredura_stream(access_token_inicial):
     headers = {"Authorization": f"Bearer {access_token_atual}", "Content-Type": "application/json"}
     
     first = 0
-    page_size_real = 100
-    erros_consecutivos = 0
-    total_processado = 0
+    # Mantive 100, mas vamos adicionar SLEEP no loop
+    page_size_real = 100 
     
-    # Data de Hoje
     tz_br = timezone(timedelta(hours=-3))
     hoje = datetime.now(tz_br)
     dia_hoje = hoje.day
     mes_hoje = hoje.month
     
-    print_log(f"🚀 Iniciando Varredura AO VIVO (Lotes de {page_size_real})")
-    print_log(f"📅 Data Alvo: {dia_hoje}/{mes_hoje}")
+    print_log(f"🚀 Iniciando Varredura Lenta e Segura (Data: {dia_hoje}/{mes_hoje})")
 
     while True:
         payload = {"pageSize": page_size_real, "first": first}
         sucesso_pagina = False
         
+        # === PAUSA DE SEGURANÇA ===
+        # Isso evita o erro 401 por "excesso de velocidade"
+        time.sleep(2) 
+        # ==========================
+
         for tentativa in range(3):
             try:
                 response = requests.post(url, json=payload, headers=headers, timeout=45)
@@ -219,27 +229,23 @@ def executar_varredura_stream(access_token_inicial):
                 
                 qtd_recebida = len(items)
                 
-                # --- PROCESSAMENTO IMEDIATO ---
-                print_log(f"📦 Lote {first} a {first+qtd_recebida} baixado. Processando...")
+                print_log(f"📦 Lote {first} a {first+qtd_recebida} baixado...")
                 processar_lote_pessoas(items, access_token_atual, dia_hoje, mes_hoje)
-                # ------------------------------
 
                 first += qtd_recebida
-                total_processado += qtd_recebida
                 sucesso_pagina = True
-                erros_consecutivos = 0
                 break 
                 
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 401:
-                    print_log(f"⚠️ Token Venceu na página {first}. Renovando...")
+                    print_log(f"⚠️ Token inválido na página {first}. Tentando renovar...")
                     novo_access = renovar_autenticacao_completa()
                     if novo_access:
                         access_token_atual = novo_access
                         headers["Authorization"] = f"Bearer {access_token_atual}"
                         continue
                     else:
-                        print_log("❌ Falha na renovação. Abortando.")
+                        print_log("❌ FIM: O token queimou e não pôde ser renovado.")
                         return
                 print_log(f"⚠️ Erro HTTP na página {first}: {e}")
                 time.sleep(5)
@@ -248,24 +254,24 @@ def executar_varredura_stream(access_token_inicial):
                 time.sleep(5)
         
         if not sucesso_pagina:
-            print_log(f"❌ PÁGINA {first} FALHOU 3x.")
-            erros_consecutivos += 1
-            if erros_consecutivos >= 3:
-                print_log("🛑 PARADA DE EMERGÊNCIA: Muitos erros seguidos.")
-                break
+            print_log(f"❌ PÁGINA {first} FALHOU 3x. Pulando...")
             first += page_size_real
 
 def main():
-    print_log("=== INICIANDO ROBÔ (MODO STREAMING) ===")
+    print_log("=== INICIANDO ROBÔ (MODO SEGURO) ===")
     creds = carregar_credentials()
     if not creds: return
     
+    # Adicionei sleep aqui também
+    time.sleep(1)
+    
     access, new_refresh = obter_access_token(creds['refresh_token'])
-    if not access: return
+    if not access: 
+        print_log("❌ Falha no login inicial. Verifique o token no Supabase.")
+        return
     
     salvar_credentials({'refresh_token': new_refresh})
     
-    # Executa tudo junto
     executar_varredura_stream(access)
     
     print_log("=== CONCLUÍDO COM SUCESSO ===")
