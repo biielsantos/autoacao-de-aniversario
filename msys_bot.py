@@ -67,10 +67,7 @@ def obter_access_token(refresh_token):
         return None, None
 
 def renovar_autenticacao_completa():
-    """
-    Função de emergência: Vai no Supabase, pega o refresh token atual,
-    renova na MSYS e salva o novo. Retorna o novo access_token.
-    """
+    """Renova token em caso de 401"""
     print("\n🔄 RENOVANDO TOKEN VENCIDO NO MEIO DO PROCESSO...")
     creds = carregar_credentials()
     if not creds: return None
@@ -87,8 +84,7 @@ def renovar_autenticacao_completa():
 def buscar_pessoas_blindado(access_token_inicial):
     """
     Busca SEQUENCIALMENTE respeitando a API.
-    Se der erro 401, renova o token e continua.
-    Lê a quantidade exata retornada para não pular ninguém.
+    Possui trava de segurança para parar se der erro muitas vezes seguidas.
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
     
@@ -103,6 +99,9 @@ def buscar_pessoas_blindado(access_token_inicial):
     first = 0
     page_size_real = 100 
     
+    # --- NOVO CONTADOR DE ERROS ---
+    erros_consecutivos_lote = 0
+    
     print(f"Iniciando varredura (Pedindo lotes de {page_size_real})...")
     
     while True:
@@ -113,7 +112,6 @@ def buscar_pessoas_blindado(access_token_inicial):
         
         sucesso_pagina = False
         
-        # Loop de tentativas (Retry)
         for tentativa in range(3):
             try:
                 response = requests.post(url, json=payload, headers=headers, timeout=45)
@@ -122,6 +120,7 @@ def buscar_pessoas_blindado(access_token_inicial):
                 data = response.json()
                 items = data.get("items", [])
                 
+                # Se lista vazia, acabou normal
                 if not items:
                     print(f"✓ Fim da lista atingido no índice {first}.")
                     return todas_pessoas
@@ -129,36 +128,46 @@ def buscar_pessoas_blindado(access_token_inicial):
                 todas_pessoas.extend(items)
                 qtd_recebida = len(items)
                 
-                # Log de progresso a cada 1000
                 if len(todas_pessoas) % 1000 < qtd_recebida: 
                     print(f"   -> Baixados: {len(todas_pessoas)} pessoas...")
 
-                # ATENÇÃO: Soma exatamente o que veio para não pular ninguém
                 first += qtd_recebida
                 sucesso_pagina = True
+                
+                # Zera o contador de erros porque deu certo
+                erros_consecutivos_lote = 0 
                 break 
                 
             except requests.exceptions.HTTPError as e:
-                # SE O ERRO FOR 401 (TOKEN VENCIDO)
                 if e.response.status_code == 401:
                     print(f"⚠️ Token Venceu na página {first}. Tentando renovar...")
                     novo_access = renovar_autenticacao_completa()
                     if novo_access:
                         access_token_atual = novo_access
                         headers["Authorization"] = f"Bearer {access_token_atual}"
-                        continue # Tenta a mesma página de novo
+                        continue 
                     else:
                         print("❌ Não foi possível renovar. Abortando busca.")
                         return todas_pessoas
                 
                 print(f"⚠️ Erro genérico no lote {first} (Tentativa {tentativa+1}): {e}")
-                time.sleep(5)
+                time.sleep(2)
             except Exception as e:
                 print(f"⚠️ Erro de conexão no lote {first}: {e}")
-                time.sleep(5)
+                time.sleep(2)
         
         if not sucesso_pagina:
-            print(f"❌ PÁGINA {first} IGNORADA APÓS FALHAS. Pulando este lote...")
+            print(f"❌ PÁGINA {first} IGNORADA APÓS FALHAS.")
+            
+            # --- TRAVA DE SEGURANÇA NOVA ---
+            erros_consecutivos_lote += 1
+            if erros_consecutivos_lote >= 3:
+                print("\n🛑 PARADA DE EMERGÊNCIA: 3 Lotes seguidos deram erro.")
+                print("   Isso geralmente significa que o banco acabou, mas a API está retornando erro em vez de vazio.")
+                print(f"   Encerrando com {len(todas_pessoas)} pessoas coletadas.")
+                break # Sai do While True
+            
+            # Se ainda não deu 3 erros, tenta pular pro próximo
             first += page_size_real
             
     return todas_pessoas
@@ -295,7 +304,7 @@ def main():
     # Salva o novo token imediatamente
     salvar_credentials({'refresh_token': new_refresh})
     
-    # 1. Baixar TUDO (com proteção contra token vencido)
+    # 1. Baixar TUDO
     todas_pessoas = buscar_pessoas_blindado(access)
     print(f"\nBase total baixada: {len(todas_pessoas)} pessoas.")
     
@@ -305,12 +314,11 @@ def main():
     print("\n=== CONCLUÍDO ===")
 
 def modo_manutencao_renovar_token():
-    """Função leve apenas para manter o token vivo no Supabase (usada pelo cron de 2h)"""
+    """Função leve apenas para manter o token vivo"""
     print("=== MODO MANUTENÇÃO: RENOVAÇÃO DE TOKEN ===")
     creds = carregar_credentials()
     if not creds: return
     
-    # Tenta renovar
     access, new_refresh = obter_access_token(creds['refresh_token'])
     
     if access and new_refresh:
@@ -320,7 +328,6 @@ def modo_manutencao_renovar_token():
         print("❌ Falha: Não foi possível renovar o token.")
 
 if __name__ == "__main__":
-    # Verifica argumentos do sistema para saber qual modo rodar
     if len(sys.argv) > 1 and sys.argv[1] == "--renovar":
         modo_manutencao_renovar_token()
     else:
