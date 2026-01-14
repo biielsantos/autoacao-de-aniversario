@@ -105,7 +105,7 @@ def renovar_autenticacao_completa():
 def buscar_pessoas_blindado(access_token_inicial):
     """
     Busca RÁPIDA com Sessão.
-    Se der erro, ENCERRA a busca e retorna o que achou.
+    Filtro: APENAS ATIVOS (indStatus = A)
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
     
@@ -115,10 +115,12 @@ def buscar_pessoas_blindado(access_token_inicial):
     first = 0
     page_size_real = 100
     
-    print_log(f"Iniciando varredura (Lotes de {page_size_real})...")
+    print_log(f"Iniciando varredura de ATIVOS (Lotes de {page_size_real})...")
     
     while True:
+        # --- AQUI ESTÁ O FILTRO ---
         payload = {
+            "indStatus": "A", # <--- FILTRO DE ATIVOS REATIVADO
             "pageSize": page_size_real,
             "first": first
         }
@@ -140,7 +142,8 @@ def buscar_pessoas_blindado(access_token_inicial):
                 todas_pessoas.extend(items)
                 qtd_recebida = len(items)
                 
-                if len(todas_pessoas) % 2000 < qtd_recebida: 
+                # Log a cada 1000 baixados
+                if len(todas_pessoas) % 1000 < qtd_recebida: 
                     print_log(f"   -> Baixados: {len(todas_pessoas)} pessoas...")
 
                 first += qtd_recebida
@@ -164,9 +167,7 @@ def buscar_pessoas_blindado(access_token_inicial):
                 time.sleep(2)
         
         if not sucesso_pagina:
-            # --- AQUI ESTÁ A CORREÇÃO ---
             print_log(f"🛑 PÁGINA {first} FALHOU 3x. Encerrando busca e indo para próxima etapa.")
-            # Break sai do While e vai para o "return todas_pessoas"
             break
             
     return todas_pessoas
@@ -289,7 +290,7 @@ def processar_e_enviar(pessoas):
         enviar_webhook(c)
 
 def main():
-    print_log("=== INICIANDO ROBÔ (BREAK ON ERROR) ===")
+    print_log("=== INICIANDO ROBÔ (STATUS ATIVO - A) ===")
     
     creds = carregar_credentials()
     if not creds: return
@@ -299,9 +300,9 @@ def main():
     
     salvar_credentials({'refresh_token': new_refresh})
     
-    # 1. Baixar TUDO (Com break se falhar)
+    # 1. Baixar APENAS ATIVOS (Mais rápido)
     todas_pessoas = buscar_pessoas_blindado(access)
-    print_log(f"\nBase baixada com sucesso: {len(todas_pessoas)} pessoas.")
+    print_log(f"\nBase de ATIVOS baixada: {len(todas_pessoas)} pessoas.")
     
     # 2. Filtrar e Enviar
     processar_e_enviar(todas_pessoas)
