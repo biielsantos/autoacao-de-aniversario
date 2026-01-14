@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import sys
 import requests
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -87,10 +88,10 @@ def buscar_pessoas_blindado(access_token_inicial):
     """
     Busca SEQUENCIALMENTE respeitando a API.
     Se der erro 401, renova o token e continua.
+    Lê a quantidade exata retornada para não pular ninguém.
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
     
-    # Variável local para poder atualizar o token se ele vencer
     access_token_atual = access_token_inicial
     
     headers = {
@@ -100,10 +101,9 @@ def buscar_pessoas_blindado(access_token_inicial):
     
     todas_pessoas = []
     first = 0
-    # MUDANÇA IMPORTANTE: Aumentei para 100 para ser mais rápido
     page_size_real = 100 
     
-    print(f"Iniciando varredura (Lotes de {page_size_real})...")
+    print(f"Iniciando varredura (Pedindo lotes de {page_size_real})...")
     
     while True:
         payload = {
@@ -113,7 +113,7 @@ def buscar_pessoas_blindado(access_token_inicial):
         
         sucesso_pagina = False
         
-        # Loop de tentativas
+        # Loop de tentativas (Retry)
         for tentativa in range(3):
             try:
                 response = requests.post(url, json=payload, headers=headers, timeout=45)
@@ -129,10 +129,11 @@ def buscar_pessoas_blindado(access_token_inicial):
                 todas_pessoas.extend(items)
                 qtd_recebida = len(items)
                 
-                # Log de progresso
-                if len(todas_pessoas) % 1000 == 0:
+                # Log de progresso a cada 1000
+                if len(todas_pessoas) % 1000 < qtd_recebida: 
                     print(f"   -> Baixados: {len(todas_pessoas)} pessoas...")
 
+                # ATENÇÃO: Soma exatamente o que veio para não pular ninguém
                 first += qtd_recebida
                 sucesso_pagina = True
                 break 
@@ -145,10 +146,9 @@ def buscar_pessoas_blindado(access_token_inicial):
                     if novo_access:
                         access_token_atual = novo_access
                         headers["Authorization"] = f"Bearer {access_token_atual}"
-                        # Não dá break, deixa o loop 'for' tentar de novo com o novo token
-                        continue 
+                        continue # Tenta a mesma página de novo
                     else:
-                        print("❌ Não foi possível renovar. Abortando.")
+                        print("❌ Não foi possível renovar. Abortando busca.")
                         return todas_pessoas
                 
                 print(f"⚠️ Erro genérico no lote {first} (Tentativa {tentativa+1}): {e}")
@@ -158,7 +158,7 @@ def buscar_pessoas_blindado(access_token_inicial):
                 time.sleep(5)
         
         if not sucesso_pagina:
-            print(f"❌ PÁGINA {first} IGNORADA APÓS FALHAS. Pulando...")
+            print(f"❌ PÁGINA {first} IGNORADA APÓS FALHAS. Pulando este lote...")
             first += page_size_real
             
     return todas_pessoas
@@ -204,7 +204,9 @@ def formatar_pessoa(p_dict, data_raw):
     if isinstance(contact, dict):
         phones = contact.get("phoneVOs", [])
         if phones and len(phones) > 0:
-            tel = f"55{phones[0].get('dddPhone','')}{phones[0].get('numPhone','')}"
+            ddd = phones[0].get('dddPhone','')
+            num = phones[0].get('numPhone','')
+            tel = f"55{ddd}{num}"
     
     return {
         "nome": p_dict.get("namPerson"),
@@ -243,7 +245,7 @@ def processar_e_enviar(pessoas, access_token):
     candidatos_para_detalhe = []
     confirmados = []
     
-    # 1. Filtro Rápido
+    # 1. Filtro Rápido (para quem já tem data na listagem)
     for p in pessoas:
         data_lista = p.get("dtaBirth")
         if data_lista:
@@ -259,7 +261,7 @@ def processar_e_enviar(pessoas, access_token):
     # 2. Busca Detalhada em Paralelo
     if candidatos_para_detalhe:
         print("   -> Buscando detalhes em paralelo...")
-        # Usei 10 workers para não sobrecarregar a API
+        # Usa 10 threads para não sobrecarregar
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_p = {
                 executor.submit(buscar_data_individual, access_token, p["idtPerson"]): p 
@@ -271,7 +273,7 @@ def processar_e_enviar(pessoas, access_token):
             for future in as_completed(future_to_p):
                 p = future_to_p[future]
                 count += 1
-                if count % 200 == 0: print(f"      Progresso: {count}/{total}")
+                if count % 500 == 0: print(f"      Progresso: {count}/{total}")
                 
                 dta_detalhe = future.result()
                 if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
@@ -282,7 +284,7 @@ def processar_e_enviar(pessoas, access_token):
         enviar_webhook(c)
 
 def main():
-    print("=== INICIANDO ROBÔ (AUTO-RENEW) ===")
+    print("=== INICIANDO ROBÔ DE ANIVERSÁRIOS ===")
     
     creds = carregar_credentials()
     if not creds: return
@@ -290,6 +292,7 @@ def main():
     access, new_refresh = obter_access_token(creds['refresh_token'])
     if not access: return
     
+    # Salva o novo token imediatamente
     salvar_credentials({'refresh_token': new_refresh})
     
     # 1. Baixar TUDO (com proteção contra token vencido)
@@ -297,15 +300,28 @@ def main():
     print(f"\nBase total baixada: {len(todas_pessoas)} pessoas.")
     
     # 2. Filtrar e Enviar
-    # Nota: Aqui usamos o 'access' original. Se ele venceu durante a busca,
-    # tecnicamente precisaríamos do novo para buscar detalhes.
-    # Mas como a busca principal agora é muito rápida (100 por vez), 
-    # dificilmente vencerá. Se vencer, a busca detalhada falhará silenciosamente.
-    # Para ser perfeito, a busca blindada deveria retornar o 'ultimo_token_valido',
-    # mas vamos manter simples pois a velocidade de 100 resolve 99% dos casos.
     processar_e_enviar(todas_pessoas, access)
     
     print("\n=== CONCLUÍDO ===")
 
+def modo_manutencao_renovar_token():
+    """Função leve apenas para manter o token vivo no Supabase (usada pelo cron de 2h)"""
+    print("=== MODO MANUTENÇÃO: RENOVAÇÃO DE TOKEN ===")
+    creds = carregar_credentials()
+    if not creds: return
+    
+    # Tenta renovar
+    access, new_refresh = obter_access_token(creds['refresh_token'])
+    
+    if access and new_refresh:
+        salvar_credentials({'refresh_token': new_refresh})
+        print("✓ Sucesso: Token renovado e salvo no Supabase.")
+    else:
+        print("❌ Falha: Não foi possível renovar o token.")
+
 if __name__ == "__main__":
-    main()
+    # Verifica argumentos do sistema para saber qual modo rodar
+    if len(sys.argv) > 1 and sys.argv[1] == "--renovar":
+        modo_manutencao_renovar_token()
+    else:
+        main()
