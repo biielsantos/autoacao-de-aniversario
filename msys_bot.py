@@ -104,7 +104,8 @@ def renovar_autenticacao_completa():
 
 def buscar_pessoas_bruto(access_token_inicial):
     """
-    Busca TUDO (sem filtro na API).
+    Busca TUDO (SEM FILTRO NA API).
+    Baixa os 26.000 registros para garantir que ninguém fica de fora.
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
     session.headers.update({"Authorization": f"Bearer {access_token_inicial}"})
@@ -113,10 +114,10 @@ def buscar_pessoas_bruto(access_token_inicial):
     first = 0
     page_size_real = 100
     
-    print_log(f"📥 Baixando lista completa (Lotes de {page_size_real})...")
+    print_log(f"📥 Baixando BASE COMPLETA (Sem filtros na API)...")
     
     while True:
-        # AQUI: Não mandamos indStatus. Queremos tudo.
+        # AQUI GARANTIMOS QUE VEM TUDO (Payload Limpo)
         payload = {
             "pageSize": page_size_real,
             "first": first
@@ -242,17 +243,28 @@ def processar_e_enviar(pessoas):
     dia_hoje = hoje.day
     mes_hoje = hoje.month
     
-    print_log(f"\n🎂 FILTRANDO ANIVERSARIANTES DE: {dia_hoje}/{mes_hoje}")
+    print_log(f"\n🎂 INICIANDO FILTRAGEM LOCAL DE: {dia_hoje}/{mes_hoje}")
+    print_log(f"   Total de registros brutos: {len(pessoas)}")
     
-    # 1. Filtro local de ATIVOS
-    pessoas_ativas = [p for p in pessoas if p.get("indStatus") == "A"]
-    print_log(f"   - Total Baixado: {len(pessoas)}")
-    print_log(f"   - Total Ativos (indStatus='A'): {len(pessoas_ativas)}")
+    # 1. FILTRAR ATIVOS NO CÓDIGO (SEGURANÇA MÁXIMA)
+    pessoas_ativas = []
+    ignorado_inativo = 0
+    
+    for p in pessoas:
+        # AQUI ACONTECE A MÁGICA: O Python decide quem é ativo
+        status = p.get("indStatus")
+        if status == "A":
+            pessoas_ativas.append(p)
+        else:
+            ignorado_inativo += 1
+            
+    print_log(f"   ✅ Ativos encontrados: {len(pessoas_ativas)}")
+    print_log(f"   🗑️ Inativos/Outros ignorados: {ignorado_inativo}")
     
     candidatos_para_detalhe = []
     confirmados = []
     
-    # 2. Filtro Rápido (em cima dos ATIVOS)
+    # 2. Filtro de Aniversário (Em cima dos Ativos)
     for p in pessoas_ativas:
         data_lista = p.get("dtaBirth")
         if data_lista:
@@ -285,12 +297,12 @@ def processar_e_enviar(pessoas):
                 if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
                     confirmados.append(formatar_pessoa(p, dta_detalhe))
 
-    print_log(f"\n🎉 Total Final de Aniversariantes: {len(confirmados)}")
+    print_log(f"\n🎉 Total Final de Aniversariantes ATIVOS: {len(confirmados)}")
     for c in confirmados:
         enviar_webhook(c)
 
 def main():
-    print_log("=== INICIANDO ROBÔ (BAIXAR TUDO -> FILTRAR LOCAL) ===")
+    print_log("=== INICIANDO ROBÔ (MODO BRUTO + FILTRO LOCAL) ===")
     
     creds = carregar_credentials()
     if not creds: return
