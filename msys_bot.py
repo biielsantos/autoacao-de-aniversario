@@ -16,10 +16,10 @@ API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://rzkskovdlaktqidqeamp.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6a3Nrb3ZkbGFrdHFpZHFlYW1wIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODA4MzE3NCwiZXhwIjoyMDgzNjU5MTc0fQ.DJlNkDbT-0rYDm0RttPp-fe4lXMJFNFNfCxHe_xkCqo")
 
-# Configuração de Logs imediatos
+# Configuração de Logs
 sys.stdout.reconfigure(encoding='utf-8')
 
-# Headers para simular navegador
+# Headers (Máscara de Navegador)
 HEADERS_PADRAO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
@@ -102,25 +102,22 @@ def renovar_autenticacao_completa():
     print_log("❌ Falha crítica ao renovar token.")
     return None
 
-def buscar_pessoas_blindado(access_token_inicial):
+def buscar_pessoas_bruto(access_token_inicial):
     """
-    Busca RÁPIDA com Sessão.
-    Filtro: APENAS ATIVOS (indStatus = A)
+    Busca TUDO (sem filtro na API).
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
-    
     session.headers.update({"Authorization": f"Bearer {access_token_inicial}"})
     
     todas_pessoas = []
     first = 0
     page_size_real = 100
     
-    print_log(f"Iniciando varredura de ATIVOS (Lotes de {page_size_real})...")
+    print_log(f"📥 Baixando lista completa (Lotes de {page_size_real})...")
     
     while True:
-        # --- AQUI ESTÁ O FILTRO ---
+        # AQUI: Não mandamos indStatus. Queremos tudo.
         payload = {
-            "indStatus": "A", # <--- FILTRO DE ATIVOS REATIVADO
             "pageSize": page_size_real,
             "first": first
         }
@@ -142,8 +139,7 @@ def buscar_pessoas_blindado(access_token_inicial):
                 todas_pessoas.extend(items)
                 qtd_recebida = len(items)
                 
-                # Log a cada 1000 baixados
-                if len(todas_pessoas) % 1000 < qtd_recebida: 
+                if len(todas_pessoas) % 2000 < qtd_recebida: 
                     print_log(f"   -> Baixados: {len(todas_pessoas)} pessoas...")
 
                 first += qtd_recebida
@@ -157,9 +153,8 @@ def buscar_pessoas_blindado(access_token_inicial):
                     if novo_access:
                         continue 
                     else:
-                        print_log("❌ Não foi possível renovar. Abortando busca e processando o que temos.")
+                        print_log("❌ Não foi possível renovar. Abortando busca.")
                         return todas_pessoas
-                
                 print_log(f"⚠️ Erro HTTP na página {first}: {e}")
                 time.sleep(2)
             except Exception as e:
@@ -167,13 +162,13 @@ def buscar_pessoas_blindado(access_token_inicial):
                 time.sleep(2)
         
         if not sucesso_pagina:
-            print_log(f"🛑 PÁGINA {first} FALHOU 3x. Encerrando busca e indo para próxima etapa.")
+            print_log(f"🛑 PÁGINA {first} FALHOU 3x. Encerrando download.")
             break
             
     return todas_pessoas
 
 def buscar_data_individual(idt_person):
-    """Busca detalhes usando a sessão compartilhada"""
+    """Busca detalhes para pegar a data escondida"""
     url = f"{BASE_URL}/api/openapi/v1/person/findForEdit"
     try:
         response = session.get(url, params={"code": idt_person}, timeout=20)
@@ -247,13 +242,18 @@ def processar_e_enviar(pessoas):
     dia_hoje = hoje.day
     mes_hoje = hoje.month
     
-    print_log(f"\n🎂 Buscando aniversariantes de: {dia_hoje}/{mes_hoje}")
+    print_log(f"\n🎂 FILTRANDO ANIVERSARIANTES DE: {dia_hoje}/{mes_hoje}")
+    
+    # 1. Filtro local de ATIVOS
+    pessoas_ativas = [p for p in pessoas if p.get("indStatus") == "A"]
+    print_log(f"   - Total Baixado: {len(pessoas)}")
+    print_log(f"   - Total Ativos (indStatus='A'): {len(pessoas_ativas)}")
     
     candidatos_para_detalhe = []
     confirmados = []
     
-    # 1. Filtro Rápido
-    for p in pessoas:
+    # 2. Filtro Rápido (em cima dos ATIVOS)
+    for p in pessoas_ativas:
         data_lista = p.get("dtaBirth")
         if data_lista:
             if verificar_data_match(data_lista, dia_hoje, mes_hoje):
@@ -262,10 +262,10 @@ def processar_e_enviar(pessoas):
             if p.get("idtPerson"):
                 candidatos_para_detalhe.append(p)
                 
-    print_log(f"   - Confirmados via lista rápida: {len(confirmados)}")
-    print_log(f"   - Sem data (buscar detalhes): {len(candidatos_para_detalhe)}")
+    print_log(f"   - Confirmados (dados rápidos): {len(confirmados)}")
+    print_log(f"   - Precisam de busca detalhada: {len(candidatos_para_detalhe)}")
     
-    # 2. Busca Detalhada
+    # 3. Busca Detalhada
     if candidatos_para_detalhe:
         print_log("   -> Buscando detalhes em paralelo...")
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -290,7 +290,7 @@ def processar_e_enviar(pessoas):
         enviar_webhook(c)
 
 def main():
-    print_log("=== INICIANDO ROBÔ (STATUS ATIVO - A) ===")
+    print_log("=== INICIANDO ROBÔ (BAIXAR TUDO -> FILTRAR LOCAL) ===")
     
     creds = carregar_credentials()
     if not creds: return
@@ -300,11 +300,11 @@ def main():
     
     salvar_credentials({'refresh_token': new_refresh})
     
-    # 1. Baixar APENAS ATIVOS (Mais rápido)
-    todas_pessoas = buscar_pessoas_blindado(access)
-    print_log(f"\nBase de ATIVOS baixada: {len(todas_pessoas)} pessoas.")
+    # 1. Baixar TUDO (26k)
+    todas_pessoas = buscar_pessoas_bruto(access)
+    print_log(f"\nDownload concluído: {len(todas_pessoas)} registros.")
     
-    # 2. Filtrar e Enviar
+    # 2. Filtrar Status 'A' e Aniversário
     processar_e_enviar(todas_pessoas)
     
     print_log("\n=== CONCLUÍDO ===")
