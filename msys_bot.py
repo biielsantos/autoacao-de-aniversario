@@ -16,14 +16,14 @@ API_KEY_BOTCONVERSA = os.getenv("API_KEY_BOTCONVERSA", "a33c54d2-5f92-4f29-b78d-
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://rzkskovdlaktqidqeamp.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6a3Nrb3ZkbGFrdHFpZHFlYW1wIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODA4MzE3NCwiZXhwIjoyMDgzNjU5MTc0fQ.DJlNkDbT-0rYDm0RttPp-fe4lXMJFNFNfCxHe_xkCqo")
 
-# Configuração de Logs imediatos
 sys.stdout.reconfigure(encoding='utf-8')
 
-# --- CABEÇALHOS PADRÃO (A MÁSCARA) ---
-# Isso faz o servidor achar que somos um Chrome no Windows
+# Headers simulando navegador real
 HEADERS_PADRAO = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
     "Content-Type": "application/json"
 }
 
@@ -62,49 +62,58 @@ def salvar_credentials(credentials):
                 "refresh_token": novo_token,
                 "updated_at": datetime.utcnow().isoformat()
             }).execute()
-        print_log("✓ Token renovado salvo no Supabase.")
+        print_log("✓ Token salvo no Supabase.")
     except Exception as e:
         print_log(f"❌ Erro ao salvar token: {e}")
 
-def obter_access_token(refresh_token):
+# --- NOVA LÓGICA DE SESSÃO ---
+# Criamos uma sessão global para manter cookies e conexão viva
+session = requests.Session()
+session.headers.update(HEADERS_PADRAO)
+
+def realizar_login_sessao(refresh_token):
+    """Faz login e atualiza a sessão com o novo token"""
     url = f"{BASE_URL}/api/openapi/v1/login"
     try:
-        # Usa os headers padrão para não ser bloqueado
-        response = requests.post(url, params={"refresh-token": refresh_token}, headers=HEADERS_PADRAO, timeout=30)
+        # Usa a sessão para manter cookies
+        response = session.post(url, params={"refresh-token": refresh_token}, timeout=30)
         response.raise_for_status()
         data = response.json()
-        return data.get("accesstoken"), data.get("refreshtoken")
+        
+        access = data.get("accesstoken")
+        new_refresh = data.get("refreshtoken")
+        
+        # Atualiza o header da sessão para as próximas chamadas
+        session.headers.update({"Authorization": f"Bearer {access}"})
+        
+        return access, new_refresh
     except Exception as e:
         print_log(f"Erro login MSYS: {e}")
         return None, None
 
 def renovar_autenticacao_completa():
     print_log("🔄 TENTATIVA DE RENOVAÇÃO DE EMERGÊNCIA...")
+    
+    # Pequena pausa para o servidor respirar
+    time.sleep(5)
+    
     creds = carregar_credentials()
     if not creds: return None
     
-    # Pausa longa para o servidor "esquecer" a gente
-    time.sleep(10)
-    
-    access, new_refresh = obter_access_token(creds['refresh_token'])
+    access, new_refresh = realizar_login_sessao(creds['refresh_token'])
     if access and new_refresh:
         salvar_credentials({'refresh_token': new_refresh})
-        print_log("✓ Autenticação recuperada com sucesso!")
+        print_log("✓ Autenticação recuperada e Sessão atualizada!")
         return access
     
-    print_log("❌ A renovação falhou. O Refresh Token no Supabase provavelmente expirou/queimou.")
+    print_log("❌ A renovação falhou. Token inválido.")
     return None
 
-def buscar_data_individual(access_token, idt_person):
-    """Busca detalhes de uma pessoa"""
+def buscar_data_individual(idt_person):
+    """Busca detalhes usando a sessão global"""
     url = f"{BASE_URL}/api/openapi/v1/person/findForEdit"
-    
-    # Headers específicos com Auth e User-Agent
-    headers = HEADERS_PADRAO.copy()
-    headers["Authorization"] = f"Bearer {access_token}"
-    
     try:
-        response = requests.get(url, params={"code": idt_person}, headers=headers, timeout=20)
+        response = session.get(url, params={"code": idt_person}, timeout=20)
         if response.status_code == 200:
             data = response.json()
             locais = [
@@ -161,16 +170,14 @@ def enviar_webhook(pessoa):
             "data_nascimento": str(pessoa['data_raw'])
         }
         headers = {"apikey": API_KEY_BOTCONVERSA}
-        time.sleep(0.5) 
+        time.sleep(0.2)
         resp = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
         if resp.status_code in [200, 201]:
             print_log(f"   🎉 ENVIADO: {pessoa['nome']}")
-        else:
-            print_log(f"   ❌ Erro envio Webhook: {resp.text}")
     except Exception as e:
-        print_log(f"   ❌ Erro conexão Webhook: {e}")
+        print_log(f"   ❌ Erro Webhook: {e}")
 
-def processar_lote_pessoas(lote_pessoas, access_token, dia_hoje, mes_hoje):
+def processar_lote_pessoas(lote_pessoas, dia_hoje, mes_hoje):
     candidatos_detalhe = []
     
     # 1. Filtro Rápido
@@ -183,12 +190,13 @@ def processar_lote_pessoas(lote_pessoas, access_token, dia_hoje, mes_hoje):
             if p.get("idtPerson"):
                 candidatos_detalhe.append(p)
     
-    # 2. Busca Detalhada (se necessário)
+    # 2. Busca Detalhada
     if candidatos_detalhe:
-        # Reduzi ainda mais os workers para não assustar o servidor
-        with ThreadPoolExecutor(max_workers=3) as executor: 
+        # IMPORTANTE: Em sessão persistente, não podemos usar threads demais
+        # pois elas compartilham o mesmo socket. Reduzido para 3.
+        with ThreadPoolExecutor(max_workers=3) as executor:
             future_to_p = {
-                executor.submit(buscar_data_individual, access_token, p["idtPerson"]): p 
+                executor.submit(buscar_data_individual, p["idtPerson"]): p 
                 for p in candidatos_detalhe
             }
             for future in as_completed(future_to_p):
@@ -197,14 +205,8 @@ def processar_lote_pessoas(lote_pessoas, access_token, dia_hoje, mes_hoje):
                 if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
                     enviar_webhook(formatar_pessoa(p, dta_detalhe))
 
-def executar_varredura_stream(access_token_inicial):
+def executar_varredura_stream():
     url = f"{BASE_URL}/api/openapi/v1/person"
-    
-    access_token_atual = access_token_inicial
-    
-    # Headers com User-Agent e Auth
-    headers = HEADERS_PADRAO.copy()
-    headers["Authorization"] = f"Bearer {access_token_atual}"
     
     first = 0
     page_size_real = 100
@@ -214,32 +216,31 @@ def executar_varredura_stream(access_token_inicial):
     dia_hoje = hoje.day
     mes_hoje = hoje.month
     
-    print_log(f"🚀 Iniciando Varredura (Data: {dia_hoje}/{mes_hoje})")
+    print_log(f"🚀 Iniciando Varredura com SESSÃO (Data: {dia_hoje}/{mes_hoje})")
 
     while True:
         payload = {"pageSize": page_size_real, "first": first}
         sucesso_pagina = False
         
-        # Aumentei o tempo de espera entre páginas para 3 segundos
-        time.sleep(3) 
+        time.sleep(2) # Pausa entre páginas
 
         for tentativa in range(3):
             try:
-                response = requests.post(url, json=payload, headers=headers, timeout=45)
+                # Usa a sessão global
+                response = session.post(url, json=payload, timeout=45)
                 response.raise_for_status()
                 
                 data = response.json()
                 items = data.get("items", [])
                 
                 if not items:
-                    print_log(f"🏁 Fim da lista atingido no índice {first}.")
+                    print_log(f"🏁 Fim da lista no índice {first}.")
                     return
                 
                 qtd_recebida = len(items)
                 print_log(f"📦 Lote {first} a {first+qtd_recebida} baixado...")
                 
-                # Se o token estiver prestes a vencer, a gente usa o atual
-                processar_lote_pessoas(items, access_token_atual, dia_hoje, mes_hoje)
+                processar_lote_pessoas(items, dia_hoje, mes_hoje)
 
                 first += qtd_recebida
                 sucesso_pagina = True
@@ -247,14 +248,13 @@ def executar_varredura_stream(access_token_inicial):
                 
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 401:
-                    print_log(f"⚠️ BLOQUEIO 401 na página {first}. Renovando...")
+                    print_log(f"⚠️ Sessão expirou na pág {first}. Renovando...")
+                    # Se renovar, a sessão global é atualizada automaticamente
                     novo_access = renovar_autenticacao_completa()
                     if novo_access:
-                        access_token_atual = novo_access
-                        headers["Authorization"] = f"Bearer {access_token_atual}"
                         continue
                     else:
-                        print_log("❌ FIM: O token queimou e não pôde ser renovado.")
+                        print_log("❌ FIM: Falha na renovação.")
                         return
                 print_log(f"⚠️ Erro HTTP na página {first}: {e}")
                 time.sleep(5)
@@ -267,29 +267,29 @@ def executar_varredura_stream(access_token_inicial):
             first += page_size_real
 
 def main():
-    print_log("=== INICIANDO ROBÔ (MODO BROWSER) ===")
+    print_log("=== INICIANDO ROBÔ (SESSÃO PERSISTENTE) ===")
     creds = carregar_credentials()
     if not creds: return
     
-    # Pausa inicial
-    time.sleep(2)
+    time.sleep(1)
     
-    access, new_refresh = obter_access_token(creds['refresh_token'])
+    # Login inicial
+    access, new_refresh = realizar_login_sessao(creds['refresh_token'])
     if not access: 
-        print_log("❌ Falha no login inicial. Verifique o token no Supabase.")
+        print_log("❌ Falha no login inicial.")
         return
     
     salvar_credentials({'refresh_token': new_refresh})
     
-    executar_varredura_stream(access)
+    executar_varredura_stream()
     
-    print_log("=== CONCLUÍDO COM SUCESSO ===")
+    print_log("=== CONCLUÍDO ===")
 
 def modo_manutencao_renovar_token():
     print_log("=== MODO MANUTENÇÃO ===")
     creds = carregar_credentials()
     if not creds: return
-    access, new_refresh = obter_access_token(creds['refresh_token'])
+    access, new_refresh = realizar_login_sessao(creds['refresh_token'])
     if access and new_refresh:
         salvar_credentials({'refresh_token': new_refresh})
         print_log("✓ Token renovado.")
