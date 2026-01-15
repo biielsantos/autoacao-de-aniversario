@@ -105,7 +105,6 @@ def renovar_autenticacao_completa():
 def buscar_pessoas_bruto(access_token_inicial):
     """
     Busca TUDO (SEM FILTRO NA API).
-    Baixa os 26.000 registros para garantir que ninguém fica de fora.
     """
     url = f"{BASE_URL}/api/openapi/v1/person"
     session.headers.update({"Authorization": f"Bearer {access_token_inicial}"})
@@ -117,7 +116,6 @@ def buscar_pessoas_bruto(access_token_inicial):
     print_log(f"📥 Baixando BASE COMPLETA (Sem filtros na API)...")
     
     while True:
-        # AQUI GARANTIMOS QUE VEM TUDO (Payload Limpo)
         payload = {
             "pageSize": page_size_real,
             "first": first
@@ -202,38 +200,48 @@ def verificar_data_match(data_raw, dia_alvo, mes_alvo):
         return False
     return False
 
-def formatar_pessoa(p_dict, data_raw):
-    tel = ""
+# --- FUNÇÃO NOVA PARA PEGAR TODOS OS NÚMEROS ---
+def extrair_lista_telefones(p_dict):
+    """Retorna uma LISTA de telefones únicos formatados"""
+    lista_telefones = set() # Usamos set para evitar duplicados
+    
     contact = p_dict.get("contactVOs")
     if isinstance(contact, dict):
         phones = contact.get("phoneVOs", [])
-        if phones and len(phones) > 0:
-            ddd = phones[0].get('dddPhone','')
-            num = phones[0].get('numPhone','')
-            tel = f"55{ddd}{num}"
+        
+        # Itera sobre TODOS os telefones da lista
+        for phone in phones:
+            ddd = phone.get('dddPhone', '')
+            num = phone.get('numPhone', '')
+            
+            # Limpeza e formatação
+            if ddd and num:
+                ddd_limpo = "".join(filter(str.isdigit, str(ddd)))
+                num_limpo = "".join(filter(str.isdigit, str(num)))
+                
+                # Monta formato 55 + DDD + NUM
+                full_num = f"55{ddd_limpo}{num_limpo}"
+                
+                # Verifica se é um número válido (mínimo 10 dígitos com DDI)
+                if len(full_num) >= 12: 
+                    lista_telefones.add(full_num)
     
-    return {
-        "nome": p_dict.get("namPerson"),
-        "telefone": tel,
-        "data_raw": data_raw
-    }
+    return list(lista_telefones)
 
-def enviar_webhook(pessoa):
-    if not pessoa['telefone'] or len(pessoa['telefone']) < 10:
-        return
-
+def enviar_webhook(nome, telefone, data_raw):
+    """Envia um disparo único"""
     try:
         payload = {
-            "nome": pessoa['nome'],
-            "telefone": pessoa['telefone'],
-            "data_nascimento": str(pessoa['data_raw'])
+            "nome": nome,
+            "telefone": telefone,
+            "data_nascimento": str(data_raw)
         }
         headers = {"apikey": API_KEY_BOTCONVERSA}
         resp = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
         if resp.status_code in [200, 201]:
-            print_log(f"   ✓ ENVIADO: {pessoa['nome']}")
+            print_log(f"   ✓ ENVIADO: {nome} -> {telefone}")
         else:
-            print_log(f"   ❌ Erro envio: {resp.text}")
+            print_log(f"   ❌ Erro envio ({telefone}): {resp.text}")
     except Exception as e:
         print_log(f"   ❌ Erro conexão: {e}")
 
@@ -246,12 +254,11 @@ def processar_e_enviar(pessoas):
     print_log(f"\n🎂 INICIANDO FILTRAGEM LOCAL DE: {dia_hoje}/{mes_hoje}")
     print_log(f"   Total de registros brutos: {len(pessoas)}")
     
-    # 1. FILTRAR ATIVOS NO CÓDIGO (SEGURANÇA MÁXIMA)
+    # 1. FILTRAR ATIVOS NO CÓDIGO
     pessoas_ativas = []
     ignorado_inativo = 0
     
     for p in pessoas:
-        # AQUI ACONTECE A MÁGICA: O Python decide quem é ativo
         status = p.get("indStatus")
         if status == "A":
             pessoas_ativas.append(p)
@@ -261,20 +268,21 @@ def processar_e_enviar(pessoas):
     print_log(f"   ✅ Ativos encontrados: {len(pessoas_ativas)}")
     print_log(f"   🗑️ Inativos/Outros ignorados: {ignorado_inativo}")
     
+    # Lista de tuplas: (dados_pessoa, data_aniversario)
+    aniversariantes_confirmados = []
     candidatos_para_detalhe = []
-    confirmados = []
     
-    # 2. Filtro de Aniversário (Em cima dos Ativos)
+    # 2. Filtro Rápido (em cima dos ATIVOS)
     for p in pessoas_ativas:
         data_lista = p.get("dtaBirth")
         if data_lista:
             if verificar_data_match(data_lista, dia_hoje, mes_hoje):
-                confirmados.append(formatar_pessoa(p, data_lista))
+                aniversariantes_confirmados.append((p, data_lista))
         else:
             if p.get("idtPerson"):
                 candidatos_para_detalhe.append(p)
                 
-    print_log(f"   - Confirmados (dados rápidos): {len(confirmados)}")
+    print_log(f"   - Confirmados (dados rápidos): {len(aniversariantes_confirmados)}")
     print_log(f"   - Precisam de busca detalhada: {len(candidatos_para_detalhe)}")
     
     # 3. Busca Detalhada
@@ -295,14 +303,32 @@ def processar_e_enviar(pessoas):
                 
                 dta_detalhe = future.result()
                 if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
-                    confirmados.append(formatar_pessoa(p, dta_detalhe))
+                    aniversariantes_confirmados.append((p, dta_detalhe))
 
-    print_log(f"\n🎉 Total Final de Aniversariantes ATIVOS: {len(confirmados)}")
-    for c in confirmados:
-        enviar_webhook(c)
+    print_log(f"\n🎉 Total Final de Aniversariantes ATIVOS: {len(aniversariantes_confirmados)}")
+    
+    # --- LOOP DE ENVIO MÚLTIPLO ---
+    for item in aniversariantes_confirmados:
+        pessoa_dict = item[0]
+        data_aniv = item[1]
+        nome = pessoa_dict.get("namPerson", "Cliente")
+        
+        # Pega a lista de todos os telefones
+        telefones = extrair_lista_telefones(pessoa_dict)
+        
+        if not telefones:
+            print_log(f"   ⚠️ {nome} é aniversariante mas NÃO TEM telefone válido.")
+            continue
+            
+        if len(telefones) > 1:
+            print_log(f"   ℹ️ {nome} possui {len(telefones)} telefones. Enviando para todos.")
+            
+        # Dispara um webhook para cada número
+        for tel in telefones:
+            enviar_webhook(nome, tel, data_aniv)
 
 def main():
-    print_log("=== INICIANDO ROBÔ (MODO BRUTO + FILTRO LOCAL) ===")
+    print_log("=== INICIANDO ROBÔ (BRUTO + MULTI-PHONE) ===")
     
     creds = carregar_credentials()
     if not creds: return
@@ -316,7 +342,7 @@ def main():
     todas_pessoas = buscar_pessoas_bruto(access)
     print_log(f"\nDownload concluído: {len(todas_pessoas)} registros.")
     
-    # 2. Filtrar Status 'A' e Aniversário
+    # 2. Filtrar Status 'A', Aniversário e Enviar Múltiplos
     processar_e_enviar(todas_pessoas)
     
     print_log("\n=== CONCLUÍDO ===")
