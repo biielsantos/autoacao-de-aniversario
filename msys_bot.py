@@ -200,36 +200,28 @@ def verificar_data_match(data_raw, dia_alvo, mes_alvo):
         return False
     return False
 
-# --- FUNÇÃO NOVA PARA PEGAR TODOS OS NÚMEROS ---
 def extrair_lista_telefones(p_dict):
     """Retorna uma LISTA de telefones únicos formatados"""
-    lista_telefones = set() # Usamos set para evitar duplicados
+    lista_telefones = set() 
     
     contact = p_dict.get("contactVOs")
     if isinstance(contact, dict):
         phones = contact.get("phoneVOs", [])
         
-        # Itera sobre TODOS os telefones da lista
         for phone in phones:
             ddd = phone.get('dddPhone', '')
             num = phone.get('numPhone', '')
             
-            # Limpeza e formatação
             if ddd and num:
                 ddd_limpo = "".join(filter(str.isdigit, str(ddd)))
                 num_limpo = "".join(filter(str.isdigit, str(num)))
-                
-                # Monta formato 55 + DDD + NUM
                 full_num = f"55{ddd_limpo}{num_limpo}"
-                
-                # Verifica se é um número válido (mínimo 10 dígitos com DDI)
                 if len(full_num) >= 12: 
                     lista_telefones.add(full_num)
     
     return list(lista_telefones)
 
 def enviar_webhook(nome, telefone, data_raw):
-    """Envia um disparo único"""
     try:
         payload = {
             "nome": nome,
@@ -254,26 +246,42 @@ def processar_e_enviar(pessoas):
     print_log(f"\n🎂 INICIANDO FILTRAGEM LOCAL DE: {dia_hoje}/{mes_hoje}")
     print_log(f"   Total de registros brutos: {len(pessoas)}")
     
-    # 1. FILTRAR ATIVOS NO CÓDIGO
-    pessoas_ativas = []
+    # --- FILTRAGEM: ATIVOS E SEM FIADORES ---
+    pessoas_filtradas = []
     ignorado_inativo = 0
+    ignorado_fiador = 0
     
     for p in pessoas:
         status = p.get("indStatus")
-        if status == "A":
-            pessoas_ativas.append(p)
-        else:
+        
+        # Pega os tipos (convertendo para string maiúscula para garantir)
+        tipo_ind = str(p.get("indType", "")).upper()
+        tipo_first = str(p.get("firstType", "")).upper()
+        tipo_sep = str(p.get("typesSeparate", "")).upper()
+        
+        # Verifica se é fiador em qualquer campo
+        eh_fiador = "GU" in tipo_ind or "GUARANTOR" in tipo_first or "FIADOR" in tipo_sep
+        
+        if status != "A":
             ignorado_inativo += 1
+            continue
             
-    print_log(f"   ✅ Ativos encontrados: {len(pessoas_ativas)}")
-    print_log(f"   🗑️ Inativos/Outros ignorados: {ignorado_inativo}")
+        if eh_fiador:
+            ignorado_fiador += 1
+            continue
+            
+        # Se passou pelos filtros, adiciona
+        pessoas_filtradas.append(p)
+            
+    print_log(f"   ✅ Ativos (Clientes/Proprietários): {len(pessoas_filtradas)}")
+    print_log(f"   🗑️ Inativos ignorados: {ignorado_inativo}")
+    print_log(f"   🚫 Fiadores ignorados: {ignorado_fiador}")
     
-    # Lista de tuplas: (dados_pessoa, data_aniversario)
-    aniversariantes_confirmados = []
     candidatos_para_detalhe = []
+    aniversariantes_confirmados = []
     
-    # 2. Filtro Rápido (em cima dos ATIVOS)
-    for p in pessoas_ativas:
+    # 2. Filtro Rápido (em cima da lista limpa)
+    for p in pessoas_filtradas:
         data_lista = p.get("dtaBirth")
         if data_lista:
             if verificar_data_match(data_lista, dia_hoje, mes_hoje):
@@ -305,30 +313,28 @@ def processar_e_enviar(pessoas):
                 if dta_detalhe and verificar_data_match(dta_detalhe, dia_hoje, mes_hoje):
                     aniversariantes_confirmados.append((p, dta_detalhe))
 
-    print_log(f"\n🎉 Total Final de Aniversariantes ATIVOS: {len(aniversariantes_confirmados)}")
+    print_log(f"\n🎉 Total Final de Aniversariantes VÁLIDOS: {len(aniversariantes_confirmados)}")
     
-    # --- LOOP DE ENVIO MÚLTIPLO ---
+    # --- ENVIO MÚLTIPLO ---
     for item in aniversariantes_confirmados:
         pessoa_dict = item[0]
         data_aniv = item[1]
         nome = pessoa_dict.get("namPerson", "Cliente")
         
-        # Pega a lista de todos os telefones
         telefones = extrair_lista_telefones(pessoa_dict)
         
         if not telefones:
-            print_log(f"   ⚠️ {nome} é aniversariante mas NÃO TEM telefone válido.")
+            print_log(f"   ⚠️ Ignorado (sem telefone válido): {nome}")
             continue
             
         if len(telefones) > 1:
             print_log(f"   ℹ️ {nome} possui {len(telefones)} telefones. Enviando para todos.")
             
-        # Dispara um webhook para cada número
         for tel in telefones:
             enviar_webhook(nome, tel, data_aniv)
 
 def main():
-    print_log("=== INICIANDO ROBÔ (BRUTO + MULTI-PHONE) ===")
+    print_log("=== INICIANDO ROBÔ (SEM FIADORES + MULTI-PHONE) ===")
     
     creds = carregar_credentials()
     if not creds: return
@@ -342,7 +348,7 @@ def main():
     todas_pessoas = buscar_pessoas_bruto(access)
     print_log(f"\nDownload concluído: {len(todas_pessoas)} registros.")
     
-    # 2. Filtrar Status 'A', Aniversário e Enviar Múltiplos
+    # 2. Filtrar e Enviar
     processar_e_enviar(todas_pessoas)
     
     print_log("\n=== CONCLUÍDO ===")
