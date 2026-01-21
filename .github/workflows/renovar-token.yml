@@ -2,10 +2,9 @@ name: Renovar Refresh Token
 
 on:
   schedule:
-    # Roda a cada 2 horas (UTC)
-    # Horários aproximados em Brasília (UTC-3):
-    # 00:00, 02:00, 04:00, 06:00, 08:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
-    - cron: '0 */2 * * *'
+    # Roda a cada 2h, mas PULA as horas 10 e 12 UTC (07h e 09h Brasil)
+    # Horas UTC: 0, 2, 4, 6, 8, [pula 10, 12], 14, 16, 18, 20, 22
+    - cron: '0 0,2,4,6,8,14,16,18,20,22 * * *'
   workflow_dispatch:  # Permite execução manual
 
 permissions:
